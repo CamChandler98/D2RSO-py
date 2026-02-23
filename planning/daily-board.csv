@@ -1,0 +1,25 @@
+Title,Body,Status,Priority,Estimate,Labels,Milestone
+Initialize Python app skeleton,"Set up pyproject, src layout, lint/test tooling, runnable app entrypoint.",Now,P0,S,"backend,priority:P0",MVP
+Add dependency baseline,"Add PySide6, input libs, pywin32, test/lint deps; verify clean install.",Now,P0,S,"backend,priority:P0",MVP
+Implement domain models,"Create SkillItem/Profile/Settings models with sequence state methods.",Now,P0,M,"backend,priority:P0",MVP
+Build JSON settings store,"Load/save settings, default profile fallback, corruption fallback handling.",Now,P0,M,"backend,priority:P0",MVP
+Implement key catalog + icon registry,"Load key list and scan skill icon assets directory.",Now,P0,M,"backend,priority:P0",MVP
+Create normalized input event contract,"Define unified event code format across keyboard/mouse/gamepad.",Now,P0,S,"backend,input,priority:P0",MVP
+Implement timer orchestration service,"Maintain active timers; retrigger should refresh existing timer.",Now,P0,M,"backend,overlay,priority:P0",MVP
+Add unit tests for sequence + timer lifecycle,"Test select/use state machine, refresh, remove behavior.",Now,P0,M,"test,priority:P0",MVP
+Build transparent overlay window,"Frameless, always-on-top, transparent overlay with icon + digits.",Next,P1,M,"ui,overlay,priority:P1",Parity
+Implement preview vs runtime click-through,"Preview draggable; runtime click-through via Win32 style.",Next,P1,M,"ui,overlay,priority:P1,risk:high",Parity
+Implement red-overlay threshold behavior,"Show red overlay in last N seconds if enabled.",Next,P1,S,"overlay,priority:P1",Parity
+Add global keyboard adapter,"Capture global keydown events and normalize key names.",Next,P1,M,"input,priority:P1",Parity
+Add global mouse adapter,"Capture mouse buttons and map to MOUSE1..MOUSEX2.",Next,P1,M,"input,priority:P1",Parity
+Add gamepad adapter,"Capture gamepad buttons; graceful no-device behavior.",Next,P1,M,"input,priority:P1,risk:med",Parity
+Integrate InputRouter start/stop,"Play/Stop toggles keyboard/mouse/gamepad services together.",Next,P1,S,"input,priority:P1",Parity
+Build profiles CRUD UI,"Add/select/delete profiles with persistence.",Next,P1,M,"ui,priority:P1",Parity
+Build skill rows UI,"Enable/icon/duration/select key/skill key editing controls.",Next,P1,L,"ui,priority:P1",Parity
+Build play/stop + preview controls,"Connect controls to tracker engine + overlay lifecycle.",Next,P1,M,"ui,overlay,priority:P1",Parity
+Port options dialog,"Insert-left, vertical, digits, start-on-launch, size, red seconds.",Later,P2,M,"ui,priority:P2",Release
+Add system tray integration,"Open/hide/exit actions and hide-on-close behavior.",Later,P2,M,"ui,priority:P2",Release
+Add single-instance lock,"Prevent duplicate running instances.",Later,P2,S,"backend,priority:P2",Release
+Create PyInstaller packaging,"Build Windows distributable with assets.",Later,P2,M,"packaging,priority:P2",Release
+Add CI pipeline,"Lint/test/build on PR + release artifact workflow.",Later,P2,M,"test,packaging,priority:P2",Release
+Write contributor docs,"Setup, architecture, troubleshooting docs.",Later,P2,S,"docs,priority:P2",Release

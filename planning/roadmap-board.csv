@@ -1,0 +1,11 @@
+Title,Body,Status,Priority,Estimate,Labels,Milestone
+MVP: Foundation & Architecture,"Project scaffold, dependencies, tooling baseline, run instructions.",Now,P0,M,"epic,backend,priority:P0",MVP
+MVP: Core Models & Persistence,"Skill/profile/settings models + robust JSON load/save and defaults.",Now,P0,L,"epic,backend,priority:P0",MVP
+MVP: Tracker Engine,"Unified input contract + timer orchestration + core tests.",Now,P0,L,"epic,backend,test,priority:P0",MVP
+Parity: Overlay Window,"Transparent overlay, timer rendering, warning overlay behavior.",Next,P1,L,"epic,ui,overlay,priority:P1",Parity
+Parity: Input Capture Stack,"Global keyboard/mouse/gamepad adapters and unified router lifecycle.",Next,P1,L,"epic,input,priority:P1",Parity
+Parity: Main App UI,"Profiles CRUD, skill row editor, play/stop and preview controls.",Next,P1,L,"epic,ui,priority:P1",Parity
+Release: UX & Desktop Behavior,"Options dialog parity, tray behavior, single-instance lock.",Later,P2,M,"epic,ui,backend,priority:P2",Release
+Release: Packaging & CI,"PyInstaller pipeline, CI checks, release artifact generation.",Later,P2,M,"epic,packaging,test,priority:P2",Release
+Release: Docs & Onboarding,"Contributor guide, architecture overview, troubleshooting playbook.",Later,P2,S,"epic,docs,priority:P2",Release
+Icebox: Nice-to-have Enhancements,"Future improvements, polish, optional feature ideas.",Later,P2,S,"epic,enhancement,priority:P2",Icebox
