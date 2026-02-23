@@ -1,0 +1,297 @@
+Title,Body,Status,Priority,Estimate,Labels,Milestone
+Initialize Python app skeleton,"## Objective
+Set up a production-ready Python project skeleton for the D2RSO port.
+
+## Scope
+- Create `src/d2rso` package layout.
+- Add `pyproject.toml`.
+- Add basic app entrypoint (`python -m d2rso.main`).
+- Add lint/format/test scripts.
+
+## Acceptance Criteria
+- App starts and shows placeholder window.
+- `pytest` runs without discovery errors.
+- Lint/format commands execute successfully.
+
+## Out of Scope
+- Feature implementation.
+
+## Notes
+Keep Windows as primary target.",Now,P0,S,"epic,backend,priority:P0",MVP
+Add dependency baseline,"## Objective
+Install and lock core dependencies for UI, input hooks, Win32 behavior, and tests.
+
+## Scope
+- Add: PySide6, pynput, pywin32, pygame (or inputs), pytest, ruff, black.
+- Add dependency docs and rationale.
+- Verify imports from clean virtualenv.
+
+## Acceptance Criteria
+- Fresh install succeeds from lockfile/requirements.
+- `python -m d2rso.main` launches without ImportError.
+
+## Risks
+- Version conflicts across input libraries.",Now,P0,S,"backend,priority:P0",MVP
+Implement domain models,"## Objective
+Create core models with behavior parity.
+
+## Scope
+- Implement `SkillItem`, `TrackerProfile`, `Settings`.
+- Include state machine methods:
+  - `select_key_pressed()`
+  - `skill_key_pressed()`
+  - `reset_keys()`
+
+## Acceptance Criteria
+- Unit tests confirm:
+  - Select+Skill sequence works.
+  - Skill-only works with no select key.
+  - Reset clears partial sequence.
+
+## Notes
+Keep models framework-agnostic (no UI dependencies).",Now,P0,M,"backend,priority:P0",MVP
+Build JSON settings store,"## Objective
+Persist app settings and profiles reliably.
+
+## Scope
+- Implement settings load/save service.
+- Fallback to defaults on invalid/corrupt JSON.
+- Ensure default profile exists when missing.
+
+## Acceptance Criteria
+- Settings persist across app restarts.
+- Corrupt file does not crash app.
+- Default profile auto-created when needed.
+
+## Notes
+Store in LocalAppData-equivalent path on Windows.",Now,P0,M,"backend,priority:P0",MVP
+Implement key catalog + icon registry,"## Objective
+Provide centralized key list + icon loading service.
+
+## Scope
+- Build key catalog including keyboard/mouse/gamepad entries.
+- Load icons from assets folder.
+- Provide lookup API for UI and overlay.
+
+## Acceptance Criteria
+- Keys available to dropdown controls.
+- Icons render successfully in test UI.
+- Missing icon path handled gracefully.",Now,P0,M,"backend,priority:P0",MVP
+Create normalized input event contract,"## Objective
+Define a device-agnostic input event format.
+
+## Scope
+- Create `InputEvent` schema (code, source, timestamp).
+- Standardize names (`F1`, `MOUSE2`, `Buttons0`, etc.).
+- Implement normalization utilities.
+
+## Acceptance Criteria
+- Keyboard/mouse/gamepad adapters all emit same shape.
+- Tracker engine consumes one unified event contract.",Now,P0,S,"backend,input,priority:P0",MVP
+Implement timer orchestration service,"## Objective
+Drive countdown lifecycle independent of UI.
+
+## Scope
+- Start/restart/remove active timers by skill ID.
+- Emit updates for remaining time and completion.
+- Prevent duplicate active trackers for same skill.
+
+## Acceptance Criteria
+- Re-trigger refreshes existing timer.
+- Completion emits removal event.
+- Service is testable without GUI thread.",Now,P0,M,"backend,overlay,priority:P0",MVP
+Add unit tests for sequence + timer lifecycle,"## Objective
+Validate core logic before UI integration.
+
+## Scope
+- Test skill state machine permutations.
+- Test timer start/refresh/complete behavior.
+- Test disabled skill handling.
+
+## Acceptance Criteria
+- All core logic tests pass in CI.
+- Edge cases documented in test names/comments.",Now,P0,M,"test,priority:P0",MVP
+Build transparent overlay window,"## Objective
+Create overlay window for active cooldown display.
+
+## Scope
+- Frameless, topmost, transparent background.
+- Show icon + optional digits.
+- Bind to tracker service updates.
+
+## Acceptance Criteria
+- Overlay displays active timers accurately.
+- Styling remains usable over game window.",Next,P1,M,"ui,overlay,priority:P1",Parity
+Implement preview vs runtime click-through,"## Objective
+Support interactive preview mode and click-through runtime mode.
+
+## Scope
+- Preview: draggable and hit-test enabled.
+- Runtime: Win32 click-through enabled.
+- Toggle behavior from control UI.
+
+## Acceptance Criteria
+- Preview drag updates saved position.
+- Runtime ignores mouse clicks (pass-through).",Next,P1,M,"ui,overlay,priority:P1,risk:high",Parity
+Implement red-overlay threshold behavior,"## Objective
+Show warning state near timer expiration.
+
+## Scope
+- Add setting `red_overlay_seconds`.
+- Apply red tint when timer <= threshold.
+- Respect disabled threshold.
+
+## Acceptance Criteria
+- Overlay enters warning state at correct time.
+- Threshold updates reflect without restart.",Next,P1,S,"overlay,priority:P1",Parity
+Add global keyboard adapter,"## Objective
+Capture global keyboard keydown events.
+
+## Scope
+- Background listener for keydown.
+- Normalize key names into input contract.
+- Add start/stop lifecycle hooks.
+
+## Acceptance Criteria
+- Captures keys while app out-of-focus.
+- No duplicate events from key repeat beyond expected behavior.",Next,P1,M,"input,priority:P1",Parity
+Add global mouse adapter,"## Objective
+Capture and normalize global mouse button events.
+
+## Scope
+- Listen for mouse button down.
+- Map to MOUSE1/MOUSE2/MOUSE3/MOUSEX1/MOUSEX2.
+- Emit normalized events.
+
+## Acceptance Criteria
+- Mappings verified with test harness/logging.
+- No crash when extra buttons unavailable.",Next,P1,M,"input,priority:P1",Parity
+Add gamepad adapter,"## Objective
+Capture gamepad button input for tracker triggers.
+
+## Scope
+- Poll or event-based button detection.
+- Normalize button names (`Buttons0...`).
+- Graceful fallback if no controller attached.
+
+## Acceptance Criteria
+- Controller input reaches tracker engine.
+- App remains stable without gamepad.",Next,P1,M,"input,priority:P1,risk:med",Parity
+Integrate InputRouter start/stop,"## Objective
+Centralize lifecycle control for all input adapters.
+
+## Scope
+- One router orchestrates keyboard/mouse/gamepad start/stop.
+- Wire play/stop UI to router + tracker service.
+
+## Acceptance Criteria
+- Start enables all configured adapters.
+- Stop fully detaches listeners/timers cleanly.",Next,P1,S,"input,priority:P1",Parity
+Build profiles CRUD UI,"## Objective
+Provide profile management UX.
+
+## Scope
+- Profile list/dropdown.
+- Add profile dialog.
+- Delete profile confirmation.
+- Persist last selected profile.
+
+## Acceptance Criteria
+- Switching profile updates visible skill rows.
+- CRUD actions persist immediately.",Next,P1,M,"ui,priority:P1",Parity
+Build skill rows UI,"## Objective
+Allow full skill configuration in main UI.
+
+## Scope
+- Skill list with columns:
+  - Enabled
+  - Icon
+  - Duration
+  - Select Key
+  - Skill Key
+- Add/remove skill actions.
+
+## Acceptance Criteria
+- Editing row updates model state.
+- Add/remove persists and reflects instantly.",Next,P1,L,"ui,priority:P1",Parity
+Build play/stop + preview controls,"## Objective
+Control runtime tracker and overlay modes.
+
+## Scope
+- Play/stop toggle.
+- Preview toggle (eye button equivalent).
+- Visual state feedback.
+
+## Acceptance Criteria
+- Play starts listeners + runtime overlay.
+- Stop detaches listeners and closes runtime overlay.
+- Preview toggles independently when not running.",Next,P1,M,"ui,overlay,priority:P1",Parity
+Port options dialog,"## Objective
+Expose runtime and visual settings in dedicated dialog.
+
+## Scope
+- Insert-left toggle
+- Vertical/horizontal toggle
+- Show digits toggle
+- Start on app launch toggle
+- Scale slider
+- Red overlay threshold
+
+## Acceptance Criteria
+- Option changes persist.
+- Overlay behavior updates correctly for each setting.",Later,P2,M,"ui,priority:P2",Release
+Add system tray integration,"## Objective
+Support tray-first desktop app behavior.
+
+## Scope
+- Tray icon
+- Open/Hide action
+- Exit action
+- Optional minimize-to-tray behavior
+
+## Acceptance Criteria
+- Closing main window can hide to tray.
+- Exit from tray performs clean shutdown and save.",Later,P2,M,"ui,priority:P2",Release
+Add single-instance lock,"## Objective
+Prevent duplicate running instances.
+
+## Scope
+- Implement app lock/mutex strategy.
+- Handle second launch gracefully.
+
+## Acceptance Criteria
+- Second launch does not create duplicate worker listeners.
+- Existing instance remains primary.",Later,P2,S,"backend,priority:P2",Release
+Create PyInstaller packaging,"## Objective
+Produce distributable Windows executable.
+
+## Scope
+- Build spec including icons/assets.
+- Document signing/notarization steps if applicable.
+- Smoke test executable on clean environment.
+
+## Acceptance Criteria
+- One-file or one-folder artifact launches correctly.
+- Overlay and input features work in packaged build.",Later,P2,M,"packaging,priority:P2",Release
+Add CI pipeline,"## Objective
+Automate quality gates and artifact generation.
+
+## Scope
+- PR workflow: lint + test.
+- Optional release workflow: build artifact.
+- Cache dependencies for speed.
+
+## Acceptance Criteria
+- PR checks block merge on failures.
+- Release workflow outputs downloadable artifact.",Later,P2,M,"test,packaging,priority:P2",Release
+Write contributor docs,"## Objective
+Make project maintainable for new contributors.
+
+## Scope
+- Setup guide
+- Architecture overview
+- Debugging and troubleshooting
+- Release process
+
+## Acceptance Criteria
+- New developer can run app locally in under 15 minutes.",Later,P2,S,"docs,priority:P2",Release
