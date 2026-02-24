@@ -47,8 +47,8 @@ This document is the source of truth for how I run planning and execution using 
 
 # Roadmap → Delivery Mapping
 ### Epic: MVP — Foundation & Architecture
-- [ ] Initialize Python app skeleton
-- [ ] Add dependency baseline
+- [x] Initialize Python app skeleton
+- [x] Add dependency baseline
 
 ### Epic: MVP — Core Models & Persistence
 - [ ] Implement domain models
