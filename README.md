@@ -6,6 +6,14 @@ Placeholder GUI shell for the D2RSO MVP. Targets Python 3.11+ and Windows first,
 - Python 3.11+
 - Pipenv installed (`pip install pipenv`)
 
+## Core dependencies
+- UI: `PySide6`
+- Input: `pynput` (keyboard/mouse), `pygame` (gamepad)
+- Windows APIs: `pywin32` (Windows only)
+- Dev tools: `pytest`, `ruff`, `black`, optional `mypy`
+
+See `planning/documents/dependency_rationale.md` for version pins and rationale.
+
 ## Quickstart (Pipenv)
 ```bash
 pipenv --python 3.11

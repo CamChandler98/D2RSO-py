@@ -5,6 +5,10 @@ verify_ssl = true
 
 [packages]
 d2rso = { path = ".", editable = true }
+PySide6 = "==6.10.2"
+pynput = "==1.8.1"
+pywin32 = {version = "==311", markers = "sys_platform == 'win32'"}
+pygame = "==2.6.1"
 
 [dev-packages]
 pytest = ">=7.4"
