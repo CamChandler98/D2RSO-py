@@ -1,0 +1,17 @@
+[[source]]
+name = "pypi"
+url = "https://pypi.org/simple"
+verify_ssl = true
+
+[packages]
+d2rso = { path = ".", editable = true }
+
+[dev-packages]
+pytest = ">=7.4"
+ruff = ">=0.3.0"
+black = ">=24.2"
+# Optional: remove if not using static type checking
+mypy = ">=1.8"
+
+[requires]
+python_version = "3.11"

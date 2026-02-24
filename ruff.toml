@@ -1,0 +1,8 @@
+line-length = 88
+target-version = "py311"
+src = ["src", "tests"]
+extend-exclude = ["build", "dist"]
+
+[lint]
+select = ["E", "F", "I", "B"]
+ignore = []
