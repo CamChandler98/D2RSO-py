@@ -224,10 +224,12 @@ class Settings:
 
         if not self.profiles:
             self.profiles = [Profile()]
+        elif not any(profile.id == DEFAULT_PROFILE_ID for profile in self.profiles):
+            self.profiles.insert(0, Profile())
 
         profile_ids = {profile.id for profile in self.profiles}
         if self.last_selected_profile_id not in profile_ids:
-            self.last_selected_profile_id = self.profiles[0].id
+            self.last_selected_profile_id = DEFAULT_PROFILE_ID
 
         for item in self.skill_items:
             if item.profile_id not in profile_ids:

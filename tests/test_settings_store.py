@@ -9,7 +9,7 @@ def test_save_then_load_round_trip(tmp_path):
     store = SettingsStore(file_path=file_path)
     original = Settings(
         last_selected_profile_id=2,
-        profiles=[Profile(id=1, name="Default"), Profile(id=2, name="Sorc")],
+        profiles=[Profile(id=0, name="Default"), Profile(id=2, name="Sorc")],
         skill_items=[
             SkillItem(
                 id=11,
@@ -22,7 +22,7 @@ def test_save_then_load_round_trip(tmp_path):
             ),
             SkillItem(
                 id=12,
-                profile_id=1,
+                profile_id=0,
                 icon_file_name="buff.png",
                 time_length=3.0,
                 is_enabled=False,
@@ -42,7 +42,7 @@ def test_save_then_load_round_trip(tmp_path):
     )
 
     store.save(original)
-    loaded = store.load()
+    loaded = SettingsStore(file_path=file_path).load()
 
     assert loaded.to_dict() == original.to_dict()
 
@@ -91,6 +91,28 @@ def test_default_profile_is_created_when_missing(tmp_path):
     assert loaded.last_selected_profile_id == 0
 
 
+def test_default_profile_is_added_when_missing_from_non_empty_profiles(tmp_path):
+    file_path = tmp_path / "settings.json"
+    file_path.write_text(
+        json.dumps(
+            {
+                "last_selected_profile_id": 5,
+                "profiles": [{"id": 5, "name": "Sorc"}],
+                "skill_items": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = SettingsStore(file_path=file_path)
+
+    loaded = store.load()
+
+    profile_ids = {profile.id for profile in loaded.profiles}
+    assert 0 in profile_ids
+    assert 5 in profile_ids
+    assert loaded.last_selected_profile_id == 5
+
+
 def test_legacy_csharp_json_shape_is_supported(tmp_path):
     file_path = tmp_path / "settings.json"
     file_path.write_text(
@@ -127,7 +149,9 @@ def test_legacy_csharp_json_shape_is_supported(tmp_path):
     loaded = store.load()
 
     assert loaded.last_selected_profile_id == 5
-    assert loaded.profiles[0].name == "Legacy"
+    assert any(
+        profile.id == 5 and profile.name == "Legacy" for profile in loaded.profiles
+    )
     assert loaded.skill_items[0].id == 42
     assert loaded.skill_items[0].select_key == "F8"
     assert loaded.skill_items[0].skill_key == "MOUSE2"
