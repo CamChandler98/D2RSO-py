@@ -58,7 +58,7 @@ This document is the source of truth for how I run planning and execution using 
 ### Epic: MVP — Tracker Engine
 - [ ] Create normalized input event contract
 - [ ] Implement timer orchestration service
-- [ ] Add unit tests for sequence + timer lifecycle
+- [x] Add unit tests for sequence + timer lifecycle
 
 ### Epic: Parity — Overlay Window
 - [ ] Build transparent overlay window

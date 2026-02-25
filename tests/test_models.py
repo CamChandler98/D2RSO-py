@@ -24,3 +24,20 @@ def test_reset_clears_partial_sequence():
     item.reset_keys()
 
     assert item.skill_key_pressed() is False
+
+
+def test_repeated_select_presses_do_not_double_arm_sequence_skill():
+    item = SkillItem(select_key="F8", skill_key="MOUSE2")
+
+    item.select_key_pressed()
+    item.select_key_pressed()
+
+    assert item.skill_key_pressed() is True
+    assert item.skill_key_pressed() is False
+
+
+def test_sequence_skill_press_without_select_never_triggers():
+    item = SkillItem(select_key="F8", skill_key="MOUSE2")
+
+    assert item.skill_key_pressed() is False
+    assert item.skill_key_pressed() is False

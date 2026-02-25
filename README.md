@@ -20,6 +20,7 @@ pipenv --python 3.11
 pipenv install --dev
 pipenv run python -m d2rso
 pipenv run pytest
+./scripts/pre_ci_core_logic.sh
 pipenv run ruff check .
 pipenv run black --check .
 ```
@@ -31,6 +32,7 @@ source .venv/bin/activate  # On Windows: .venv\\Scripts\\activate
 pip install -e .[dev]
 python -m d2rso
 pytest
+./scripts/pre_ci_core_logic.sh
 ruff check .
 black --check .
 ```
@@ -44,4 +46,5 @@ black --check .
 ## Validation checklist
 - `pipenv run python -m d2rso` shows the placeholder window without errors.
 - `pipenv run pytest` passes.
+- `./scripts/pre_ci_core_logic.sh` passes core logic tests used before CI.
 - `pipenv run ruff check .` and `pipenv run black --check .` succeed.

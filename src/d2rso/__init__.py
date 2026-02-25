@@ -1,5 +1,31 @@
 """D2RSO package exports."""
 
+from .countdown_service import (
+    ActiveCountdown,
+    CountdownEvent,
+    CountdownEventType,
+    CountdownService,
+)
+from .input_events import (
+    InputEvent,
+    InputSource,
+    gamepad_event,
+    infer_input_source_from_code,
+    keyboard_event,
+    make_input_event,
+    mouse_event,
+    normalize_gamepad_code,
+    normalize_input_code,
+    normalize_input_source,
+    normalize_keyboard_code,
+    normalize_mouse_code,
+)
+from .key_icon_registry import (
+    IconAsset,
+    KeyEntry,
+    KeyIconRegistry,
+    get_key_icon_registry,
+)
 from .main import run
 from .models import Profile, Settings, SkillItem, TrackerProfile
 from .settings_store import (
@@ -9,16 +35,39 @@ from .settings_store import (
     load_settings,
     save_settings,
 )
+from .tracker_engine import TrackerInputEngine, process_input_event
 
 __all__ = [
+    "ActiveCountdown",
+    "CountdownEvent",
+    "CountdownEventType",
+    "CountdownService",
+    "IconAsset",
+    "InputEvent",
+    "InputSource",
+    "KeyEntry",
+    "KeyIconRegistry",
     "Profile",
     "Settings",
     "SettingsStore",
     "SkillItem",
+    "TrackerInputEngine",
     "TrackerProfile",
     "default_settings_dir",
     "default_settings_path",
+    "gamepad_event",
+    "get_key_icon_registry",
+    "infer_input_source_from_code",
+    "keyboard_event",
     "load_settings",
+    "make_input_event",
+    "mouse_event",
+    "normalize_gamepad_code",
+    "normalize_input_code",
+    "normalize_input_source",
+    "normalize_keyboard_code",
+    "normalize_mouse_code",
+    "process_input_event",
     "run",
     "save_settings",
 ]

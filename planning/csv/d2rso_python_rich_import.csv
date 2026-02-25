@@ -109,8 +109,8 @@ Validate core logic before UI integration.
 - Test disabled skill handling.
 
 ## Acceptance Criteria
-- All core logic tests pass in CI.
-- Edge cases documented in test names/comments.",Now,P0,M,"test,priority:P0",MVP
+- All core logic tests pass in CI (or local pre-CI script).
+- Edge cases documented in test names/comments.",Done,P0,M,"test,priority:P0",MVP
 Build transparent overlay window,"## Objective
 Create overlay window for active cooldown display.
 
