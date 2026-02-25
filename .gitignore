@@ -9,7 +9,7 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
-D2RSO/
+/D2RSO/
 develop-eggs/
 dist/
 downloads/

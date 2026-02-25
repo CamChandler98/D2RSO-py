@@ -8,6 +8,8 @@ def test_ui_imports():
     import PySide6
     from PySide6 import QtWidgets  # noqa: F401
 
+    assert PySide6.__version__
+
 
 def test_pygame_imports():
     import pygame
