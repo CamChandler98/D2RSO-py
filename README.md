@@ -37,6 +37,8 @@ ruff check .
 black --check .
 ```
 
+See `planning/documents/windows_dev_environment_guide.md` for a detailed step-by-step guide for setting up a fresh Windows development/test environment.
+
 ## Project layout
 - `src/d2rso` – package with placeholder GUI entrypoint
 - `tests/` – basic import/run sanity tests
