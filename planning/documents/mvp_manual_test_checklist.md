@@ -3,6 +3,8 @@
 Snapshot date: February 25, 2026
 Milestone: MVP
 
+For step-by-step execution guidance, see `planning/documents/mvp_manual_test_steps.md`.
+
 ## Session Info
 
 - Tester:
