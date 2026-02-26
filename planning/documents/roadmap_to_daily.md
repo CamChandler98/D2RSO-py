@@ -61,7 +61,7 @@ This document is the source of truth for how I run planning and execution using 
 - [x] Add unit tests for sequence + timer lifecycle
 
 ### Epic: Parity — Overlay Window
-- [ ] Build transparent overlay window
+- [x] Build transparent overlay window
 - [ ] Implement preview vs runtime click-through
 - [ ] Implement red-overlay threshold behavior
 

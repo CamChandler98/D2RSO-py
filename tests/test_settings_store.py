@@ -4,6 +4,12 @@ from d2rso.models import Profile, Settings, SkillItem
 from d2rso.settings_store import SettingsStore
 
 
+def test_legacy_constructor_red_overlay_alias_still_populates_new_setting():
+    settings = Settings(red_tracker_overlay_sec=3)
+    assert settings.red_overlay_seconds == 3
+    assert settings.red_tracker_overlay_sec == 3
+
+
 def test_save_then_load_round_trip(tmp_path):
     file_path = tmp_path / "settings.json"
     store = SettingsStore(file_path=file_path)
@@ -37,7 +43,7 @@ def test_save_then_load_round_trip(tmp_path):
         is_tracker_insert_to_left=True,
         is_tracker_vertical=True,
         show_digits_in_tracker=True,
-        red_tracker_overlay_sec=2,
+        red_overlay_seconds=2,
         start_tracker_on_app_run=True,
     )
 
@@ -156,4 +162,30 @@ def test_legacy_csharp_json_shape_is_supported(tmp_path):
     assert loaded.skill_items[0].select_key == "F8"
     assert loaded.skill_items[0].skill_key == "MOUSE2"
     assert loaded.tracker_x == 22
+    assert loaded.red_overlay_seconds == 3
     assert loaded.red_tracker_overlay_sec == 3
+
+
+def test_new_red_overlay_seconds_key_is_loaded_and_saved(tmp_path):
+    file_path = tmp_path / "settings.json"
+    file_path.write_text(
+        json.dumps(
+            {
+                "last_selected_profile_id": 0,
+                "profiles": [{"id": 0, "name": "Default"}],
+                "skill_items": [],
+                "red_overlay_seconds": 4,
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = SettingsStore(file_path=file_path)
+
+    loaded = store.load()
+    assert loaded.red_overlay_seconds == 4
+    assert loaded.red_tracker_overlay_sec == 4
+
+    store.save(loaded)
+    reloaded_payload = json.loads(file_path.read_text(encoding="utf-8"))
+    assert reloaded_payload["red_overlay_seconds"] == 4
+    assert reloaded_payload["red_tracker_overlay_sec"] == 4

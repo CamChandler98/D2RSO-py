@@ -1,0 +1,780 @@
+"""Main configuration UI for profile/skill/run controls."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any
+
+from PySide6 import QtCore, QtGui, QtWidgets
+
+from .countdown_service import CountdownService
+from .input_events import InputEvent
+from .input_router import InputRouter
+from .key_icon_registry import KeyIconRegistry, get_key_icon_registry
+from .models import (
+    DEFAULT_SKILL_DURATION_SECONDS,
+    DEFAULT_SKILL_KEY,
+    Profile,
+    Settings,
+    SkillItem,
+)
+from .overlay_window import CooldownOverlayWindow
+from .settings_store import SettingsStore
+
+_COL_ENABLED = 0
+_COL_ICON = 1
+_COL_DURATION = 2
+_COL_SELECT = 3
+_COL_USE = 4
+_COL_REMOVE = 5
+
+
+def _default_input_router_factory(
+    *,
+    on_triggered: Callable[[InputEvent, list[SkillItem]], None],
+    on_error: Callable[[Exception], None],
+) -> InputRouter:
+    return InputRouter(on_triggered=on_triggered, on_error=on_error)
+
+
+class MainWindow(QtWidgets.QMainWindow):
+    """Desktop window for profile CRUD, skill configuration, and run controls."""
+
+    _triggered_skills_signal = QtCore.Signal(object)
+    _router_error_signal = QtCore.Signal(str)
+
+    def __init__(
+        self,
+        *,
+        settings_store: SettingsStore | None = None,
+        settings: Settings | None = None,
+        icon_registry: KeyIconRegistry | None = None,
+        input_router_factory: Callable[..., Any] | None = None,
+        countdown_service_factory: Callable[[], CountdownService] | None = None,
+        parent: QtWidgets.QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._settings_store = settings_store or SettingsStore()
+        self._settings = settings or self._settings_store.load()
+        self._settings.ensure_defaults()
+
+        self._icon_registry = icon_registry or get_key_icon_registry()
+        self._countdown_service_factory = countdown_service_factory or CountdownService
+        self._countdown_service: CountdownService | None = None
+        self._preview_overlay: CooldownOverlayWindow | None = None
+        self._runtime_overlay: CooldownOverlayWindow | None = None
+
+        router_factory = input_router_factory or _default_input_router_factory
+        self._input_router = router_factory(
+            on_triggered=self._on_router_triggered,
+            on_error=self._on_router_error,
+        )
+
+        self._loading_ui = False
+        self._triggered_skills_signal.connect(self._handle_triggered_skills)
+        self._router_error_signal.connect(self._handle_router_error)
+
+        self._init_window()
+        self._init_layout()
+        self._refresh_profiles(
+            selected_profile_id=self._settings.last_selected_profile_id
+        )
+        self._update_control_states()
+
+    @property
+    def is_playing(self) -> bool:
+        return bool(getattr(self._input_router, "is_running", False))
+
+    @property
+    def is_preview_visible(self) -> bool:
+        return self._preview_overlay is not None
+
+    @property
+    def settings(self) -> Settings:
+        return self._settings
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        try:
+            self._stop_tracking()
+            self._close_preview_overlay()
+            self._save_settings()
+            super().closeEvent(event)
+        except KeyboardInterrupt:
+            event.accept()
+
+    def add_profile(self, name: str) -> Profile | None:
+        normalized_name = name.strip()
+        if not normalized_name:
+            return None
+
+        new_id = (
+            max((profile.id for profile in self._settings.profiles), default=-1) + 1
+        )
+        created = Profile(id=new_id, name=normalized_name)
+        self._settings.profiles.append(created)
+        self._settings.last_selected_profile_id = created.id
+        self._save_settings()
+        self._refresh_profiles(selected_profile_id=created.id)
+        return created
+
+    def rename_current_profile(self, name: str) -> bool:
+        profile = self._current_profile()
+        if profile is None:
+            return False
+
+        normalized_name = name.strip()
+        if not normalized_name:
+            return False
+
+        profile.name = normalized_name
+        self._save_settings()
+        self._refresh_profiles(selected_profile_id=profile.id)
+        return True
+
+    def remove_current_profile(self) -> bool:
+        profile = self._current_profile()
+        if profile is None:
+            return False
+
+        if len(self._settings.profiles) <= 1:
+            return False
+
+        self._settings.profiles = [
+            item for item in self._settings.profiles if item.id != profile.id
+        ]
+        self._settings.skill_items = [
+            item for item in self._settings.skill_items if item.profile_id != profile.id
+        ]
+        self._settings.ensure_defaults()
+        self._settings.last_selected_profile_id = self._settings.profiles[0].id
+        self._save_settings()
+        self._refresh_profiles(
+            selected_profile_id=self._settings.last_selected_profile_id
+        )
+        return True
+
+    def add_skill_to_current_profile(self) -> SkillItem | None:
+        profile = self._current_profile()
+        if profile is None:
+            return None
+
+        new_id = max((item.id for item in self._settings.skill_items), default=0) + 1
+        default_icon_name = self._default_icon_name()
+        item = SkillItem(
+            id=new_id,
+            profile_id=profile.id,
+            icon_file_name=default_icon_name,
+            time_length=DEFAULT_SKILL_DURATION_SECONDS,
+            is_enabled=True,
+            select_key=None,
+            skill_key=DEFAULT_SKILL_KEY,
+        )
+        self._settings.skill_items.append(item)
+        self._save_settings()
+        self._populate_skill_table()
+        return item
+
+    def remove_skill(self, skill_id: int) -> bool:
+        current_count = len(self._settings.skill_items)
+        self._settings.skill_items = [
+            item for item in self._settings.skill_items if item.id != skill_id
+        ]
+        if len(self._settings.skill_items) == current_count:
+            return False
+        self._save_settings()
+        self._populate_skill_table()
+        return True
+
+    def selected_profile_id(self) -> int | None:
+        profile_id = self.profile_combo.currentData()
+        if profile_id is None:
+            return None
+        return int(profile_id)
+
+    def selected_skill_items(self) -> list[SkillItem]:
+        profile_id = self.selected_profile_id()
+        if profile_id is None:
+            return []
+        return [
+            item for item in self._settings.skill_items if item.profile_id == profile_id
+        ]
+
+    def _init_window(self) -> None:
+        self.setWindowTitle("D2R Skill Overlay")
+        self.resize(980, 620)
+        self.setMinimumSize(860, 460)
+
+    def _init_layout(self) -> None:
+        central = QtWidgets.QWidget(self)
+        self.setCentralWidget(central)
+
+        root = QtWidgets.QVBoxLayout(central)
+        root.setContentsMargins(14, 14, 14, 14)
+        root.setSpacing(10)
+
+        runtime_bar = QtWidgets.QHBoxLayout()
+        runtime_bar.setSpacing(8)
+
+        self.preview_button = QtWidgets.QPushButton("Preview", self)
+        self.preview_button.clicked.connect(self._toggle_preview)
+        runtime_bar.addWidget(self.preview_button)
+
+        self.play_button = QtWidgets.QPushButton("Play", self)
+        self.play_button.clicked.connect(self._toggle_playback)
+        runtime_bar.addWidget(self.play_button)
+
+        runtime_bar.addStretch(1)
+
+        self.status_label = QtWidgets.QLabel("Idle", self)
+        self.status_label.setObjectName("runtime_status_label")
+        runtime_bar.addWidget(self.status_label)
+
+        root.addLayout(runtime_bar)
+
+        overlay_options_bar = QtWidgets.QHBoxLayout()
+        overlay_options_bar.setSpacing(8)
+
+        overlay_options_bar.addWidget(QtWidgets.QLabel("Overlay", self))
+
+        self.show_digits_checkbox = QtWidgets.QCheckBox("Show Digits", self)
+        self.show_digits_checkbox.setToolTip("Show countdown digits on overlay icons.")
+        self.show_digits_checkbox.setChecked(self._settings.show_digits_in_tracker)
+        self.show_digits_checkbox.toggled.connect(self._on_show_digits_toggled)
+        overlay_options_bar.addWidget(self.show_digits_checkbox)
+
+        overlay_options_bar.addWidget(QtWidgets.QLabel("Red Warning (sec)", self))
+
+        self.red_overlay_seconds_spin = QtWidgets.QSpinBox(self)
+        self.red_overlay_seconds_spin.setRange(0, 600)
+        self.red_overlay_seconds_spin.setSingleStep(1)
+        self.red_overlay_seconds_spin.setValue(self._settings.red_overlay_seconds_effective)
+        self.red_overlay_seconds_spin.setToolTip(
+            "Apply red warning tint when remaining time is less than or equal to this value."
+        )
+        self.red_overlay_seconds_spin.valueChanged.connect(
+            self._on_red_overlay_seconds_changed
+        )
+        overlay_options_bar.addWidget(self.red_overlay_seconds_spin)
+
+        overlay_options_bar.addStretch(1)
+        root.addLayout(overlay_options_bar)
+
+        profile_bar = QtWidgets.QHBoxLayout()
+        profile_bar.setSpacing(6)
+        profile_bar.addWidget(QtWidgets.QLabel("Profile", self))
+
+        self.profile_combo = QtWidgets.QComboBox(self)
+        self.profile_combo.currentIndexChanged.connect(
+            self._on_profile_selection_changed
+        )
+        profile_bar.addWidget(self.profile_combo, 1)
+
+        self.add_profile_button = QtWidgets.QPushButton("Add", self)
+        self.add_profile_button.clicked.connect(self._on_add_profile_clicked)
+        profile_bar.addWidget(self.add_profile_button)
+
+        self.rename_profile_button = QtWidgets.QPushButton("Rename", self)
+        self.rename_profile_button.clicked.connect(self._on_rename_profile_clicked)
+        profile_bar.addWidget(self.rename_profile_button)
+
+        self.remove_profile_button = QtWidgets.QPushButton("Delete", self)
+        self.remove_profile_button.clicked.connect(self._on_remove_profile_clicked)
+        profile_bar.addWidget(self.remove_profile_button)
+
+        root.addLayout(profile_bar)
+
+        self.add_skill_button = QtWidgets.QPushButton("Add Skill", self)
+        self.add_skill_button.clicked.connect(self._on_add_skill_clicked)
+        root.addWidget(self.add_skill_button, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
+
+        self.skill_table = QtWidgets.QTableWidget(0, 6, self)
+        self.skill_table.setHorizontalHeaderLabels(
+            ["Enabled", "Icon", "Duration (sec)", "Select Key", "Use Key", ""]
+        )
+        self.skill_table.verticalHeader().setVisible(False)
+        self.skill_table.setAlternatingRowColors(True)
+        self.skill_table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.NoSelection
+        )
+        self.skill_table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.skill_table.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+
+        header = self.skill_table.horizontalHeader()
+        header.setSectionResizeMode(
+            _COL_ENABLED, QtWidgets.QHeaderView.ResizeMode.ResizeToContents
+        )
+        header.setSectionResizeMode(_COL_ICON, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        header.resizeSection(_COL_ICON, 180)
+        header.setSectionResizeMode(
+            _COL_DURATION, QtWidgets.QHeaderView.ResizeMode.ResizeToContents
+        )
+        header.setSectionResizeMode(
+            _COL_SELECT, QtWidgets.QHeaderView.ResizeMode.Stretch
+        )
+        header.setSectionResizeMode(_COL_USE, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(
+            _COL_REMOVE, QtWidgets.QHeaderView.ResizeMode.ResizeToContents
+        )
+
+        root.addWidget(self.skill_table, 1)
+
+    def _current_profile(self) -> Profile | None:
+        profile_id = self.selected_profile_id()
+        if profile_id is None:
+            return None
+        return next(
+            (
+                profile
+                for profile in self._settings.profiles
+                if profile.id == profile_id
+            ),
+            None,
+        )
+
+    def _refresh_profiles(self, *, selected_profile_id: int | None = None) -> None:
+        self._loading_ui = True
+        try:
+            profiles = list(self._settings.profiles)
+            target_profile_id = (
+                self._settings.last_selected_profile_id
+                if selected_profile_id is None
+                else int(selected_profile_id)
+            )
+
+            with QtCore.QSignalBlocker(self.profile_combo):
+                self.profile_combo.clear()
+                for profile in profiles:
+                    self.profile_combo.addItem(profile.name, profile.id)
+
+                selected_index = self.profile_combo.findData(target_profile_id)
+                if selected_index < 0:
+                    selected_index = 0 if profiles else -1
+                if selected_index >= 0:
+                    self.profile_combo.setCurrentIndex(selected_index)
+
+            current_profile_id = self.selected_profile_id()
+            if current_profile_id is not None:
+                self._settings.last_selected_profile_id = current_profile_id
+
+            self._populate_skill_table()
+        finally:
+            self._loading_ui = False
+
+    def _populate_skill_table(self) -> None:
+        self.skill_table.setRowCount(0)
+        profile = self._current_profile()
+        if profile is None:
+            self._refresh_preview_skills()
+            self._update_control_states()
+            return
+
+        selected_items = [
+            item for item in self._settings.skill_items if item.profile_id == profile.id
+        ]
+        for item in selected_items:
+            self._append_skill_row(item)
+
+        self._refresh_preview_skills()
+        self._update_control_states()
+
+    def _append_skill_row(self, item: SkillItem) -> None:
+        row_index = self.skill_table.rowCount()
+        self.skill_table.insertRow(row_index)
+
+        enabled_checkbox = QtWidgets.QCheckBox(self)
+        enabled_checkbox.setChecked(item.is_enabled)
+        enabled_checkbox.toggled.connect(
+            lambda checked, skill_id=item.id: self._update_skill_value(
+                skill_id, "is_enabled", bool(checked)
+            )
+        )
+        self.skill_table.setCellWidget(
+            row_index,
+            _COL_ENABLED,
+            self._wrap_centered(enabled_checkbox),
+        )
+
+        icon_combo = self._build_icon_combo(item)
+        icon_combo.currentIndexChanged.connect(
+            lambda _index, combo=icon_combo, skill_id=item.id: self._update_skill_value(
+                skill_id,
+                "icon_file_name",
+                self._combo_data_or_none(combo) or "",
+            )
+        )
+        self.skill_table.setCellWidget(row_index, _COL_ICON, icon_combo)
+
+        duration_spin = QtWidgets.QDoubleSpinBox(self)
+        duration_spin.setDecimals(1)
+        duration_spin.setSingleStep(0.1)
+        duration_spin.setRange(0.0, 600.0)
+        duration_spin.setValue(max(0.0, float(item.time_length)))
+        duration_spin.valueChanged.connect(
+            lambda value, skill_id=item.id: self._update_skill_value(
+                skill_id, "time_length", float(value)
+            )
+        )
+        self.skill_table.setCellWidget(row_index, _COL_DURATION, duration_spin)
+
+        select_combo = self._build_key_combo(item.select_key)
+        select_combo.currentIndexChanged.connect(
+            lambda _index, combo=select_combo, skill_id=item.id: (
+                self._update_skill_value(
+                    skill_id,
+                    "select_key",
+                    self._combo_data_or_none(combo),
+                )
+            )
+        )
+        self.skill_table.setCellWidget(row_index, _COL_SELECT, select_combo)
+
+        use_combo = self._build_key_combo(item.skill_key)
+        use_combo.currentIndexChanged.connect(
+            lambda _index, combo=use_combo, skill_id=item.id: self._update_skill_value(
+                skill_id,
+                "skill_key",
+                self._combo_data_or_none(combo),
+            )
+        )
+        self.skill_table.setCellWidget(row_index, _COL_USE, use_combo)
+
+        remove_button = QtWidgets.QPushButton("Remove", self)
+        remove_button.clicked.connect(
+            lambda _checked=False, skill_id=item.id: self.remove_skill(skill_id)
+        )
+        self.skill_table.setCellWidget(row_index, _COL_REMOVE, remove_button)
+
+        self.skill_table.setRowHeight(row_index, 46)
+
+    def _build_icon_combo(self, item: SkillItem) -> QtWidgets.QComboBox:
+        combo = QtWidgets.QComboBox(self)
+        combo.setIconSize(QtCore.QSize(32, 32))
+        combo.addItem("(none)", "")
+
+        for icon in self._icon_registry.list_icons():
+            combo.addItem(
+                QtGui.QIcon(str(icon.path)),
+                icon.path.name,
+                icon.path.name,
+            )
+
+        selected_icon = self._icon_registry.get_icon(item.icon_file_name)
+        selected_name = selected_icon.path.name if selected_icon is not None else ""
+        if not selected_name and item.icon_file_name:
+            selected_name = item.icon_file_name
+            combo.addItem(item.icon_file_name, item.icon_file_name)
+
+        selected_index = self._find_combo_data_index(combo, selected_name)
+        combo.setCurrentIndex(selected_index if selected_index >= 0 else 0)
+        return combo
+
+    def _build_key_combo(self, current_code: str | None) -> QtWidgets.QComboBox:
+        combo = QtWidgets.QComboBox(self)
+        for entry in self._icon_registry.list_key_entries(include_empty=True):
+            label = entry.name if entry.name is not None else "(none)"
+            combo.addItem(label, entry.code)
+        selected_index = self._find_combo_data_index(combo, current_code)
+        combo.setCurrentIndex(selected_index if selected_index >= 0 else 0)
+        return combo
+
+    @staticmethod
+    def _find_combo_data_index(combo: QtWidgets.QComboBox, target: str | None) -> int:
+        if target is None:
+            return combo.findData(None)
+        normalized_target = str(target).strip().casefold()
+        for index in range(combo.count()):
+            value = combo.itemData(index)
+            if value is None and not normalized_target:
+                return index
+            if isinstance(value, str) and value.strip().casefold() == normalized_target:
+                return index
+        return -1
+
+    @staticmethod
+    def _combo_data_or_none(combo: QtWidgets.QComboBox) -> str | None:
+        value = combo.currentData()
+        if isinstance(value, str):
+            normalized = value.strip()
+            return normalized or None
+        return None
+
+    @staticmethod
+    def _wrap_centered(widget: QtWidgets.QWidget) -> QtWidgets.QWidget:
+        wrapper = QtWidgets.QWidget()
+        layout = QtWidgets.QHBoxLayout(wrapper)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(widget, 0, QtCore.Qt.AlignmentFlag.AlignCenter)
+        return wrapper
+
+    def _default_icon_name(self) -> str:
+        icons = self._icon_registry.list_icons()
+        if not icons:
+            return ""
+        return icons[0].path.name
+
+    def _update_skill_value(self, skill_id: int, field: str, value: Any) -> None:
+        if self._loading_ui:
+            return
+        item = next(
+            (row for row in self._settings.skill_items if row.id == skill_id), None
+        )
+        if item is None:
+            return
+
+        if field == "is_enabled":
+            item.is_enabled = bool(value)
+        elif field == "icon_file_name":
+            item.icon_file_name = str(value or "")
+        elif field == "time_length":
+            item.time_length = max(0.0, float(value))
+        elif field == "select_key":
+            item.select_key = None if value is None else str(value)
+        elif field == "skill_key":
+            item.skill_key = None if value is None else str(value)
+        else:
+            return
+
+        self._save_settings()
+        self._refresh_preview_skills()
+
+    def _save_settings(self) -> None:
+        self._settings.ensure_defaults()
+        try:
+            self._settings_store.save(self._settings)
+        except OSError as exc:
+            self._router_error_signal.emit(f"Save failed: {exc}")
+
+    def _refresh_preview_skills(self) -> None:
+        if self._preview_overlay is not None:
+            self._preview_overlay.set_skill_items(self.selected_skill_items())
+
+    def _on_profile_selection_changed(self, _index: int) -> None:
+        if self._loading_ui:
+            return
+        profile_id = self.selected_profile_id()
+        if profile_id is None:
+            return
+        self._settings.last_selected_profile_id = profile_id
+        self._save_settings()
+        self._populate_skill_table()
+
+    def _on_add_profile_clicked(self) -> None:
+        name, accepted = QtWidgets.QInputDialog.getText(
+            self,
+            "Add Profile",
+            "Profile name:",
+        )
+        if accepted:
+            self.add_profile(name)
+
+    def _on_rename_profile_clicked(self) -> None:
+        profile = self._current_profile()
+        if profile is None:
+            return
+        name, accepted = QtWidgets.QInputDialog.getText(
+            self,
+            "Rename Profile",
+            "Profile name:",
+            QtWidgets.QLineEdit.EchoMode.Normal,
+            profile.name,
+        )
+        if accepted:
+            self.rename_current_profile(name)
+
+    def _on_remove_profile_clicked(self) -> None:
+        profile = self._current_profile()
+        if profile is None:
+            return
+        result = QtWidgets.QMessageBox.question(
+            self,
+            "Delete Profile",
+            f"Delete profile '{profile.name}' and all of its skills?",
+            QtWidgets.QMessageBox.StandardButton.Yes
+            | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        if result == QtWidgets.QMessageBox.StandardButton.Yes:
+            self.remove_current_profile()
+
+    def _on_add_skill_clicked(self) -> None:
+        self.add_skill_to_current_profile()
+
+    def _on_show_digits_toggled(self, checked: bool) -> None:
+        if self._loading_ui:
+            return
+        self._settings.show_digits_in_tracker = bool(checked)
+        self._save_settings()
+        self._apply_overlay_settings_update()
+
+    def _on_red_overlay_seconds_changed(self, value: int) -> None:
+        if self._loading_ui:
+            return
+        self._settings.red_overlay_seconds = max(0, int(value))
+        self._save_settings()
+        self._apply_overlay_settings_update()
+
+    def _apply_overlay_settings_update(self) -> None:
+        self._refresh_preview_skills()
+        if self._countdown_service is not None:
+            self._countdown_service.emit_updates()
+
+    def _toggle_preview(self) -> None:
+        if self.is_playing:
+            return
+        if self.is_preview_visible:
+            self._close_preview_overlay()
+        else:
+            self._open_preview_overlay()
+        self._update_control_states()
+
+    def _open_preview_overlay(self) -> None:
+        if self._preview_overlay is not None:
+            return
+
+        overlay = CooldownOverlayWindow(
+            settings=self._settings,
+            icon_registry=self._icon_registry,
+            preview_mode=True,
+        )
+        overlay.set_skill_items(self.selected_skill_items())
+        overlay.show()
+        self._preview_overlay = overlay
+
+    def _close_preview_overlay(self) -> None:
+        if self._preview_overlay is None:
+            return
+        overlay = self._preview_overlay
+        self._preview_overlay = None
+        self._store_overlay_position(overlay)
+        overlay.close()
+        overlay.deleteLater()
+        self._save_settings()
+
+    def _toggle_playback(self) -> None:
+        if self.is_playing:
+            self._stop_tracking()
+        else:
+            self._start_tracking()
+        self._update_control_states()
+
+    def _start_tracking(self) -> None:
+        if self.is_playing:
+            return
+
+        self._close_preview_overlay()
+        selected_items = self.selected_skill_items()
+        self._save_settings()
+
+        self._input_router.set_skill_items(selected_items)
+        self._countdown_service = self._countdown_service_factory()
+        self._runtime_overlay = CooldownOverlayWindow(
+            settings=self._settings,
+            icon_registry=self._icon_registry,
+            preview_mode=False,
+        )
+        self._runtime_overlay.set_skill_items(selected_items)
+        self._runtime_overlay.bind_countdown_service(self._countdown_service)
+        self._runtime_overlay.show()
+
+        try:
+            self._input_router.start()
+        except Exception as exc:
+            self._router_error_signal.emit(f"Start failed: {exc}")
+            self._dispose_runtime_overlay()
+            self._countdown_service = None
+
+    def _stop_tracking(self) -> None:
+        if self.is_playing:
+            try:
+                self._input_router.stop()
+            except Exception as exc:
+                self._router_error_signal.emit(f"Stop failed: {exc}")
+
+        self._dispose_runtime_overlay()
+        self._countdown_service = None
+
+    def _dispose_runtime_overlay(self) -> None:
+        if self._runtime_overlay is None:
+            return
+        overlay = self._runtime_overlay
+        self._runtime_overlay = None
+        self._store_overlay_position(overlay)
+        overlay.unbind_countdown_service()
+        overlay.close()
+        overlay.deleteLater()
+        self._save_settings()
+
+    def _store_overlay_position(self, overlay: CooldownOverlayWindow) -> None:
+        position = overlay.pos()
+        self._settings.tracker_x = int(position.x())
+        self._settings.tracker_y = int(position.y())
+
+    def _on_router_triggered(
+        self, _event: InputEvent, skill_items: list[SkillItem]
+    ) -> None:
+        payload: list[tuple[int, float]] = []
+        for item in skill_items:
+            if not isinstance(item, SkillItem):
+                continue
+            payload.append((item.id, max(0.0, float(item.time_length))))
+        if payload:
+            self._triggered_skills_signal.emit(payload)
+
+    def _on_router_error(self, exc: Exception) -> None:
+        self._router_error_signal.emit(str(exc))
+
+    @QtCore.Slot(object)
+    def _handle_triggered_skills(self, payload: object) -> None:
+        if self._countdown_service is None:
+            return
+        if not isinstance(payload, list):
+            return
+        for row in payload:
+            if not isinstance(row, tuple) or len(row) != 2:
+                continue
+            skill_id, duration = row
+            self._countdown_service.refresh(
+                skill_id=int(skill_id),
+                duration_seconds=max(0.0, float(duration)),
+            )
+
+    @QtCore.Slot(str)
+    def _handle_router_error(self, message: str) -> None:
+        if not message:
+            return
+        self.status_label.setText(message)
+
+    def _update_control_states(self) -> None:
+        is_playing = self.is_playing
+        is_preview = self.is_preview_visible
+
+        self.play_button.setText("Stop" if is_playing else "Play")
+        self.preview_button.setText("Hide Preview" if is_preview else "Preview")
+        self.preview_button.setEnabled(not is_playing)
+
+        configure_enabled = not is_playing
+        self.profile_combo.setEnabled(configure_enabled)
+        self.add_profile_button.setEnabled(configure_enabled)
+        self.rename_profile_button.setEnabled(
+            configure_enabled and self.profile_combo.count() > 0
+        )
+        self.remove_profile_button.setEnabled(
+            configure_enabled and self.profile_combo.count() > 1
+        )
+        self.add_skill_button.setEnabled(
+            configure_enabled and self._current_profile() is not None
+        )
+        self.skill_table.setEnabled(configure_enabled)
+
+        if is_playing:
+            self.status_label.setText("Running")
+        elif is_preview:
+            self.status_label.setText("Previewing")
+        elif "failed" not in self.status_label.text().lower():
+            self.status_label.setText("Idle")
+
+
+__all__ = ["MainWindow"]

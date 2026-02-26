@@ -203,15 +203,25 @@ class Settings:
     is_tracker_insert_to_left: bool = False
     is_tracker_vertical: bool = False
     show_digits_in_tracker: bool = False
+    red_overlay_seconds: int = 0
     red_tracker_overlay_sec: int = 0
     start_tracker_on_app_run: bool = False
 
     def __post_init__(self) -> None:
+        if (
+            _as_int(self.red_overlay_seconds, 0) <= 0
+            and _as_int(self.red_tracker_overlay_sec, 0) > 0
+        ):
+            self.red_overlay_seconds = _as_int(self.red_tracker_overlay_sec, 0)
         self.ensure_defaults()
 
     @property
     def is_red_tracker_overlay_enabled(self) -> bool:
-        return self.red_tracker_overlay_sec > 0
+        return self.red_overlay_seconds_effective > 0
+
+    @property
+    def red_overlay_seconds_effective(self) -> int:
+        return max(0, _as_int(self.red_overlay_seconds, 0))
 
     def ensure_defaults(self) -> None:
         """Repair invalid or partial state while preserving usable data."""
@@ -241,10 +251,12 @@ class Settings:
             self.form_scale_x = DEFAULT_FORM_SCALE
         if self.form_scale_y <= 0:
             self.form_scale_y = DEFAULT_FORM_SCALE
-        if self.red_tracker_overlay_sec < 0:
-            self.red_tracker_overlay_sec = 0
+        red_overlay_seconds = self.red_overlay_seconds_effective
+        self.red_overlay_seconds = red_overlay_seconds
+        self.red_tracker_overlay_sec = red_overlay_seconds
 
     def to_dict(self) -> dict[str, Any]:
+        red_overlay_seconds = self.red_overlay_seconds_effective
         return {
             "last_selected_profile_id": self.last_selected_profile_id,
             "skill_items": [item.to_dict() for item in self.skill_items],
@@ -256,7 +268,8 @@ class Settings:
             "is_tracker_insert_to_left": self.is_tracker_insert_to_left,
             "is_tracker_vertical": self.is_tracker_vertical,
             "show_digits_in_tracker": self.show_digits_in_tracker,
-            "red_tracker_overlay_sec": self.red_tracker_overlay_sec,
+            "red_overlay_seconds": red_overlay_seconds,
+            "red_tracker_overlay_sec": red_overlay_seconds,
             "start_tracker_on_app_run": self.start_tracker_on_app_run,
         }
 
@@ -279,6 +292,18 @@ class Settings:
             for item_data in skill_items_payload:
                 if isinstance(item_data, Mapping):
                     skill_items.append(SkillItem.from_dict(item_data))
+
+        red_overlay_seconds = _as_int(
+            _get_value(
+                data,
+                "red_overlay_seconds",
+                "RedOverlaySeconds",
+                "red_tracker_overlay_sec",
+                "RedTrackerOverlaySec",
+                default=0,
+            ),
+            0,
+        )
 
         return cls(
             last_selected_profile_id=_as_int(
@@ -327,12 +352,8 @@ class Settings:
                 ),
                 False,
             ),
-            red_tracker_overlay_sec=_as_int(
-                _get_value(
-                    data, "red_tracker_overlay_sec", "RedTrackerOverlaySec", default=0
-                ),
-                0,
-            ),
+            red_overlay_seconds=red_overlay_seconds,
+            red_tracker_overlay_sec=red_overlay_seconds,
             start_tracker_on_app_run=_as_bool(
                 _get_value(
                     data,
