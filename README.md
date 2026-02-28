@@ -38,7 +38,10 @@ ruff check .
 black --check .
 ```
 
-See `planning/documents/windows_dev_environment_guide.md` for a detailed step-by-step guide for setting up a fresh Windows development/test environment.
+Additional guides:
+- `planning/documents/windows_dev_environment_guide.md` for a fresh Windows development/test environment
+- `planning/documents/windows_install_uninstall_guide.md` for end-user install, update, and uninstall steps
+- `planning/documents/github_actions_guide.md` for CI, PR checks, and release workflow usage
 
 ## Project layout
 - `src/d2rso` – package with placeholder GUI entrypoint
