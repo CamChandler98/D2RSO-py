@@ -801,6 +801,37 @@ def test_tray_exit_performs_clean_shutdown_and_saves_runtime_position():
     assert saved.tracker_y == 456
 
 
+def test_tray_can_be_disabled_by_environment(monkeypatch):
+    _get_qapp()
+    monkeypatch.setenv("D2RSO_DISABLE_TRAY", "1")
+    monkeypatch.setattr(
+        QtWidgets.QSystemTrayIcon,
+        "isSystemTrayAvailable",
+        staticmethod(lambda: True),
+    )
+
+    settings = Settings(
+        last_selected_profile_id=0,
+        profiles=[Profile(id=0, name="Default")],
+    )
+    store = _MemorySettingsStore(settings)
+
+    window = MainWindow(
+        settings_store=store,
+        settings=settings,
+        icon_registry=KeyIconRegistry(assets_dir="does-not-exist"),
+        input_router_factory=lambda **kwargs: _FakeInputRouter(**kwargs),
+        enable_tray=None,
+        tray_icon_factory=_FakeTrayIcon,
+    )
+    window.show()
+    _flush_events()
+
+    assert window._tray_icon is None
+
+    window.close()
+
+
 def test_save_failures_surface_in_status_label():
     _get_qapp()
     settings = Settings(

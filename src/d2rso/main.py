@@ -33,6 +33,15 @@ def build_window() -> MainWindow:
     return MainWindow()
 
 
+def _request_auto_exit(
+    app: QtWidgets.QApplication,
+    window: MainWindow,
+) -> None:
+    """Terminate the app reliably for automation and smoke tests."""
+    window.exit_to_desktop()
+    QtCore.QTimer.singleShot(0, app.quit)
+
+
 def run() -> None:
     """Launch the desktop UI."""
     app = QtWidgets.QApplication.instance()
@@ -46,7 +55,10 @@ def run() -> None:
     if owns_app:
         auto_exit_delay_ms = _get_auto_exit_delay_ms()
         if auto_exit_delay_ms is not None:
-            QtCore.QTimer.singleShot(auto_exit_delay_ms, window.exit_to_desktop)
+            QtCore.QTimer.singleShot(
+                auto_exit_delay_ms,
+                lambda: _request_auto_exit(app, window),
+            )
         app.exec()
 
 

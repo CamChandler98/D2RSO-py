@@ -21,6 +21,7 @@ def main() -> int:
 
     env = os.environ.copy()
     env.setdefault("D2RSO_AUTO_EXIT_MS", str(DEFAULT_AUTO_EXIT_MS))
+    env.setdefault("D2RSO_DISABLE_TRAY", "1")
 
     completed = subprocess.run(
         [str(exe_path)],

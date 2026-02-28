@@ -53,10 +53,14 @@ def test_run_auto_exit_uses_window_shutdown_path(monkeypatch):
 
         def __init__(self, _argv) -> None:
             self.exec_count = 0
+            self.quit_count = 0
 
         def exec(self) -> int:
             self.exec_count += 1
             return 0
+
+        def quit(self) -> None:
+            self.quit_count += 1
 
     class _FakeWindow:
         def __init__(self) -> None:
@@ -85,5 +89,5 @@ def test_run_auto_exit_uses_window_shutdown_path(monkeypatch):
     assert window.show_count == 1
     assert len(scheduled) == 1
     assert scheduled[0][0] == 1200
-    assert scheduled[0][1] == window.exit_to_desktop
-    assert window.exit_count == 0
+    scheduled[0][1]()
+    assert window.exit_count == 1

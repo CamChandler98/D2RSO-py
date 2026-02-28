@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from typing import Any
 
@@ -28,6 +29,14 @@ _COL_DURATION = 2
 _COL_SELECT = 3
 _COL_USE = 4
 _COL_REMOVE = 5
+_DISABLE_TRAY_ENV_VAR = "D2RSO_DISABLE_TRAY"
+
+
+def _env_var_enabled(name: str) -> bool:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return False
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -249,6 +258,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _is_tray_enabled(self) -> bool:
         if self._enable_tray is not None:
             return bool(self._enable_tray)
+        if _env_var_enabled(_DISABLE_TRAY_ENV_VAR):
+            return False
         return bool(QtWidgets.QSystemTrayIcon.isSystemTrayAvailable())
 
     def _window_icon_for_tray(self) -> QtGui.QIcon:
