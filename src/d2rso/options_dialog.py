@@ -105,7 +105,8 @@ class OptionsDialog(QtWidgets.QDialog):
         self.red_overlay_seconds_spin.setRange(0, 600)
         self.red_overlay_seconds_spin.setSingleStep(1)
         self.red_overlay_seconds_spin.setToolTip(
-            "Apply the red warning overlay when remaining seconds are at or below this value."
+            "Apply the red warning overlay when remaining seconds "
+            "are at or below this value."
         )
         self.red_overlay_seconds_spin.valueChanged.connect(
             self._on_red_overlay_seconds_changed

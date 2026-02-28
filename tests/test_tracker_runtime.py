@@ -2,9 +2,8 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6 import QtWidgets
-
 import pytest
+from PySide6 import QtWidgets
 
 from d2rso.input_events import keyboard_event
 from d2rso.models import SkillItem
@@ -103,7 +102,7 @@ def test_tracker_runtime_routes_triggered_skills_into_countdown_service() -> Non
     assert countdown_service.active_count == 1
 
 
-def test_tracker_runtime_stop_clears_service_router_bindings_and_sequence_state() -> None:
+def test_tracker_runtime_stop_clears_router_bindings_and_sequence_state() -> None:
     _get_qapp()
     holder: dict[str, _FakeInputRouter] = {}
 
