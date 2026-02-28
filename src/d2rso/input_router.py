@@ -16,6 +16,7 @@ from .tracker_engine import TrackerInputEngine
 
 _QUEUE_TIMEOUT_SECONDS = 0.05
 _GAMEPAD_POLL_INTERVAL_SECONDS = 0.01
+_LISTENER_JOIN_TIMEOUT_SECONDS = 1.0
 
 
 def _apply_darwin_pynput_keyboard_workaround(keyboard_module: Any) -> None:
@@ -112,7 +113,7 @@ class KeyboardInputAdapter:
         try:
             listener.start()
         except Exception:
-            _stop_listener_safely(listener)
+            _stop_listener(listener, suppress_exceptions=True)
             raise
         self._listener = listener
         self._is_running = True
@@ -125,7 +126,7 @@ class KeyboardInputAdapter:
         self._is_running = False
         if listener is None:
             return
-        listener.stop()
+        _stop_listener(listener)
 
     def _on_press(self, key: Any) -> None:
         self._emit_normalized(key)
@@ -176,7 +177,7 @@ class MouseInputAdapter:
         try:
             listener.start()
         except Exception:
-            _stop_listener_safely(listener)
+            _stop_listener(listener, suppress_exceptions=True)
             raise
         self._listener = listener
         self._is_running = True
@@ -189,7 +190,7 @@ class MouseInputAdapter:
         self._is_running = False
         if listener is None:
             return
-        listener.stop()
+        _stop_listener(listener)
 
     def _on_click(self, _x: int, _y: int, button: Any, pressed: bool) -> None:
         if not pressed:
@@ -570,13 +571,32 @@ def _handle_adapter_exception(
         callback(exception)
 
 
-def _stop_listener_safely(listener: Any) -> None:
+def _stop_listener(
+    listener: Any,
+    *,
+    suppress_exceptions: bool = False,
+    join_timeout_seconds: float = _LISTENER_JOIN_TIMEOUT_SECONDS,
+) -> None:
     stop_fn = getattr(listener, "stop", None)
+    join_fn = getattr(listener, "join", None)
+    pending_exception: Exception | None = None
+
     if callable(stop_fn):
         try:
             stop_fn()
-        except Exception:
-            pass
+        except Exception as exc:
+            if not suppress_exceptions:
+                pending_exception = exc
+
+    if callable(join_fn) and listener is not threading.current_thread():
+        try:
+            join_fn(timeout=join_timeout_seconds)
+        except Exception as exc:
+            if pending_exception is None and not suppress_exceptions:
+                pending_exception = exc
+
+    if pending_exception is not None:
+        raise pending_exception
 
 
 __all__ = [

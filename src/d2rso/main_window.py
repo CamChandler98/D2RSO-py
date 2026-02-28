@@ -8,8 +8,7 @@ from typing import Any
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .countdown_service import CountdownService
-from .input_events import InputEvent
-from .input_router import InputRouter
+from .input_events import normalize_input_code
 from .key_icon_registry import KeyIconRegistry, get_key_icon_registry
 from .models import (
     DEFAULT_SKILL_DURATION_SECONDS,
@@ -20,6 +19,7 @@ from .models import (
 )
 from .overlay_window import CooldownOverlayWindow
 from .settings_store import SettingsStore
+from .tracker_runtime import TrackerRuntimeController
 
 _COL_ENABLED = 0
 _COL_ICON = 1
@@ -29,19 +29,8 @@ _COL_USE = 4
 _COL_REMOVE = 5
 
 
-def _default_input_router_factory(
-    *,
-    on_triggered: Callable[[InputEvent, list[SkillItem]], None],
-    on_error: Callable[[Exception], None],
-) -> InputRouter:
-    return InputRouter(on_triggered=on_triggered, on_error=on_error)
-
-
 class MainWindow(QtWidgets.QMainWindow):
     """Desktop window for profile CRUD, skill configuration, and run controls."""
-
-    _triggered_skills_signal = QtCore.Signal(object)
-    _router_error_signal = QtCore.Signal(str)
 
     def __init__(
         self,
@@ -59,20 +48,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self._settings.ensure_defaults()
 
         self._icon_registry = icon_registry or get_key_icon_registry()
-        self._countdown_service_factory = countdown_service_factory or CountdownService
-        self._countdown_service: CountdownService | None = None
         self._preview_overlay: CooldownOverlayWindow | None = None
         self._runtime_overlay: CooldownOverlayWindow | None = None
-
-        router_factory = input_router_factory or _default_input_router_factory
-        self._input_router = router_factory(
-            on_triggered=self._on_router_triggered,
-            on_error=self._on_router_error,
+        self._tracker_runtime = TrackerRuntimeController(
+            input_router_factory=input_router_factory,
+            countdown_service_factory=countdown_service_factory or CountdownService,
+            parent=self,
         )
+        self._tracker_runtime.error_occurred.connect(self._handle_runtime_error)
 
         self._loading_ui = False
-        self._triggered_skills_signal.connect(self._handle_triggered_skills)
-        self._router_error_signal.connect(self._handle_router_error)
 
         self._init_window()
         self._init_layout()
@@ -83,7 +68,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @property
     def is_playing(self) -> bool:
-        return bool(getattr(self._input_router, "is_running", False))
+        return self._tracker_runtime.is_running
 
     @property
     def is_preview_visible(self) -> bool:
@@ -139,6 +124,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if len(self._settings.profiles) <= 1:
             return False
 
+        replacement_profile_id = self._replacement_profile_id_after_removal(profile.id)
         self._settings.profiles = [
             item for item in self._settings.profiles if item.id != profile.id
         ]
@@ -146,7 +132,7 @@ class MainWindow(QtWidgets.QMainWindow):
             item for item in self._settings.skill_items if item.profile_id != profile.id
         ]
         self._settings.ensure_defaults()
-        self._settings.last_selected_profile_id = self._settings.profiles[0].id
+        self._settings.last_selected_profile_id = replacement_profile_id
         self._save_settings()
         self._refresh_profiles(
             selected_profile_id=self._settings.last_selected_profile_id
@@ -247,7 +233,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.red_overlay_seconds_spin = QtWidgets.QSpinBox(self)
         self.red_overlay_seconds_spin.setRange(0, 600)
         self.red_overlay_seconds_spin.setSingleStep(1)
-        self.red_overlay_seconds_spin.setValue(self._settings.red_overlay_seconds_effective)
+        self.red_overlay_seconds_spin.setValue(
+            self._settings.red_overlay_seconds_effective
+        )
         self.red_overlay_seconds_spin.setToolTip(
             "Apply red warning tint when remaining time is less than or equal to this value."
         )
@@ -289,7 +277,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.skill_table = QtWidgets.QTableWidget(0, 6, self)
         self.skill_table.setHorizontalHeaderLabels(
-            ["Enabled", "Icon", "Duration (sec)", "Select Key", "Use Key", ""]
+            ["Enabled", "Icon", "Duration (sec)", "Select Key", "Skill Key", ""]
         )
         self.skill_table.verticalHeader().setVisible(False)
         self.skill_table.setAlternatingRowColors(True)
@@ -475,7 +463,10 @@ class MainWindow(QtWidgets.QMainWindow):
         for entry in self._icon_registry.list_key_entries(include_empty=True):
             label = entry.name if entry.name is not None else "(none)"
             combo.addItem(label, entry.code)
-        selected_index = self._find_combo_data_index(combo, current_code)
+        selected_code = self._validated_key_code(current_code)
+        selected_index = self._find_combo_data_index(combo, selected_code)
+        if selected_index < 0:
+            selected_index = self._find_combo_data_index(combo, None)
         combo.setCurrentIndex(selected_index if selected_index >= 0 else 0)
         return combo
 
@@ -499,6 +490,33 @@ class MainWindow(QtWidgets.QMainWindow):
             normalized = value.strip()
             return normalized or None
         return None
+
+    def _validated_key_code(self, value: Any) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return None
+
+        normalized = normalize_input_code(value.strip())
+        if normalized is None:
+            return None
+
+        entry = self._icon_registry.get_key(normalized)
+        if entry is None:
+            return None
+        return entry.code
+
+    @staticmethod
+    def _validated_duration(
+        value: Any,
+        *,
+        fallback: float,
+    ) -> float:
+        try:
+            normalized = float(value)
+        except (TypeError, ValueError):
+            normalized = fallback
+        return round(min(600.0, max(0.0, normalized)), 1)
 
     @staticmethod
     def _wrap_centered(widget: QtWidgets.QWidget) -> QtWidgets.QWidget:
@@ -529,11 +547,22 @@ class MainWindow(QtWidgets.QMainWindow):
         elif field == "icon_file_name":
             item.icon_file_name = str(value or "")
         elif field == "time_length":
-            item.time_length = max(0.0, float(value))
+            item.time_length = self._validated_duration(
+                value,
+                fallback=item.time_length,
+            )
         elif field == "select_key":
-            item.select_key = None if value is None else str(value)
+            item.select_key = (
+                self._validated_key_code(value)
+                if value is not None
+                else None
+            )
         elif field == "skill_key":
-            item.skill_key = None if value is None else str(value)
+            item.skill_key = (
+                self._validated_key_code(value)
+                if value is not None
+                else None
+            )
         else:
             return
 
@@ -545,7 +574,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             self._settings_store.save(self._settings)
         except OSError as exc:
-            self._router_error_signal.emit(f"Save failed: {exc}")
+            self._handle_runtime_error(f"Save failed: {exc}")
 
     def _refresh_preview_skills(self) -> None:
         if self._preview_overlay is not None:
@@ -591,13 +620,43 @@ class MainWindow(QtWidgets.QMainWindow):
         result = QtWidgets.QMessageBox.question(
             self,
             "Delete Profile",
-            f"Delete profile '{profile.name}' and all of its skills?",
+            self._profile_delete_message(profile),
             QtWidgets.QMessageBox.StandardButton.Yes
             | QtWidgets.QMessageBox.StandardButton.No,
             QtWidgets.QMessageBox.StandardButton.No,
         )
         if result == QtWidgets.QMessageBox.StandardButton.Yes:
             self.remove_current_profile()
+
+    def _replacement_profile_id_after_removal(self, removed_profile_id: int) -> int:
+        remaining_profiles = [
+            profile
+            for profile in self._settings.profiles
+            if profile.id != removed_profile_id
+        ]
+        if not remaining_profiles:
+            return 0
+
+        removed_index = next(
+            (
+                index
+                for index, profile in enumerate(self._settings.profiles)
+                if profile.id == removed_profile_id
+            ),
+            len(remaining_profiles) - 1,
+        )
+        replacement_index = min(removed_index, len(remaining_profiles) - 1)
+        return remaining_profiles[replacement_index].id
+
+    def _profile_delete_message(self, profile: Profile) -> str:
+        skill_count = sum(
+            1 for item in self._settings.skill_items if item.profile_id == profile.id
+        )
+        skill_label = "skill row" if skill_count == 1 else "skill rows"
+        return (
+            f"Delete profile '{profile.name}' and its {skill_count} {skill_label}?\n\n"
+            "This cannot be undone."
+        )
 
     def _on_add_skill_clicked(self) -> None:
         self.add_skill_to_current_profile()
@@ -618,8 +677,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _apply_overlay_settings_update(self) -> None:
         self._refresh_preview_skills()
-        if self._countdown_service is not None:
-            self._countdown_service.emit_updates()
+        countdown_service = self._tracker_runtime.countdown_service
+        if countdown_service is not None:
+            countdown_service.emit_updates()
 
     def _toggle_preview(self) -> None:
         if self.is_playing:
@@ -668,33 +728,31 @@ class MainWindow(QtWidgets.QMainWindow):
         selected_items = self.selected_skill_items()
         self._save_settings()
 
-        self._input_router.set_skill_items(selected_items)
-        self._countdown_service = self._countdown_service_factory()
-        self._runtime_overlay = CooldownOverlayWindow(
-            settings=self._settings,
-            icon_registry=self._icon_registry,
-            preview_mode=False,
-        )
-        self._runtime_overlay.set_skill_items(selected_items)
-        self._runtime_overlay.bind_countdown_service(self._countdown_service)
-        self._runtime_overlay.show()
-
         try:
-            self._input_router.start()
+            countdown_service = self._tracker_runtime.start(selected_items)
+            overlay = CooldownOverlayWindow(
+                settings=self._settings,
+                icon_registry=self._icon_registry,
+                preview_mode=False,
+            )
+            overlay.set_skill_items(selected_items)
+            overlay.bind_countdown_service(countdown_service)
+            overlay.show()
+            self._runtime_overlay = overlay
         except Exception as exc:
-            self._router_error_signal.emit(f"Start failed: {exc}")
+            self._handle_runtime_error(f"Start failed: {exc}")
             self._dispose_runtime_overlay()
-            self._countdown_service = None
+            try:
+                self._tracker_runtime.stop()
+            except Exception:
+                pass
 
     def _stop_tracking(self) -> None:
-        if self.is_playing:
-            try:
-                self._input_router.stop()
-            except Exception as exc:
-                self._router_error_signal.emit(f"Stop failed: {exc}")
-
         self._dispose_runtime_overlay()
-        self._countdown_service = None
+        try:
+            self._tracker_runtime.stop()
+        except Exception as exc:
+            self._handle_runtime_error(f"Stop failed: {exc}")
 
     def _dispose_runtime_overlay(self) -> None:
         if self._runtime_overlay is None:
@@ -712,37 +770,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._settings.tracker_x = int(position.x())
         self._settings.tracker_y = int(position.y())
 
-    def _on_router_triggered(
-        self, _event: InputEvent, skill_items: list[SkillItem]
-    ) -> None:
-        payload: list[tuple[int, float]] = []
-        for item in skill_items:
-            if not isinstance(item, SkillItem):
-                continue
-            payload.append((item.id, max(0.0, float(item.time_length))))
-        if payload:
-            self._triggered_skills_signal.emit(payload)
-
-    def _on_router_error(self, exc: Exception) -> None:
-        self._router_error_signal.emit(str(exc))
-
-    @QtCore.Slot(object)
-    def _handle_triggered_skills(self, payload: object) -> None:
-        if self._countdown_service is None:
-            return
-        if not isinstance(payload, list):
-            return
-        for row in payload:
-            if not isinstance(row, tuple) or len(row) != 2:
-                continue
-            skill_id, duration = row
-            self._countdown_service.refresh(
-                skill_id=int(skill_id),
-                duration_seconds=max(0.0, float(duration)),
-            )
-
     @QtCore.Slot(str)
-    def _handle_router_error(self, message: str) -> None:
+    def _handle_runtime_error(self, message: str) -> None:
         if not message:
             return
         self.status_label.setText(message)

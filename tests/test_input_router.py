@@ -43,12 +43,18 @@ class _FakeListener:
         self.on_click = on_click
         self.start_count = 0
         self.stop_count = 0
+        self.join_count = 0
+        self.join_timeouts: list[float | None] = []
 
     def start(self) -> None:
         self.start_count += 1
 
     def stop(self) -> None:
         self.stop_count += 1
+
+    def join(self, timeout: float | None = None) -> None:
+        self.join_count += 1
+        self.join_timeouts.append(timeout)
 
 
 class _StartFailingListener(_FakeListener):
@@ -286,6 +292,29 @@ def test_keyboard_adapter_rolls_back_if_listener_start_fails() -> None:
     assert adapter.is_running is False
     assert holder["listener"].start_count == 1
     assert holder["listener"].stop_count == 1
+    assert holder["listener"].join_count == 1
+
+
+def test_keyboard_adapter_start_stop_are_idempotent_and_join_listener() -> None:
+    holder: dict[str, _FakeListener] = {}
+
+    def _factory(on_press):
+        listener = _FakeListener(on_press=on_press)
+        holder["listener"] = listener
+        return listener
+
+    adapter = KeyboardInputAdapter(listener_factory=_factory)
+
+    adapter.start()
+    adapter.start()
+    adapter.stop()
+    adapter.stop()
+
+    assert adapter.is_running is False
+    assert holder["listener"].start_count == 1
+    assert holder["listener"].stop_count == 1
+    assert holder["listener"].join_count == 1
+    assert holder["listener"].join_timeouts == [1.0]
 
 
 def test_mouse_adapter_maps_button_down_only_to_standard_event() -> None:
@@ -308,6 +337,68 @@ def test_mouse_adapter_maps_button_down_only_to_standard_event() -> None:
     assert len(received) == 1
     assert received[0].code == "MOUSE2"
     assert received[0].source == InputSource.MOUSE
+    assert holder["listener"].join_count == 1
+
+
+@pytest.mark.parametrize(
+    ("raw_button", "expected_code"),
+    [
+        pytest.param(SimpleNamespace(name="left"), "MOUSE1", id="left"),
+        pytest.param(SimpleNamespace(name="right"), "MOUSE2", id="right"),
+        pytest.param(SimpleNamespace(name="middle"), "MOUSE3", id="middle"),
+        pytest.param(SimpleNamespace(name="x1"), "MOUSEX1", id="x1"),
+        pytest.param(SimpleNamespace(name="x2"), "MOUSEX2", id="x2"),
+    ],
+)
+def test_mouse_adapter_maps_supported_button_names_to_tracker_codes(
+    raw_button,
+    expected_code: str,
+) -> None:
+    holder: dict[str, _FakeListener] = {}
+
+    def _factory(on_click):
+        listener = _FakeListener(on_click=on_click)
+        holder["listener"] = listener
+        return listener
+
+    received = []
+    adapter = MouseInputAdapter(listener_factory=_factory)
+    adapter.set_event_callback(received.append)
+    adapter.start()
+
+    holder["listener"].on_click(320, 240, raw_button, True)
+    adapter.stop()
+
+    assert len(received) == 1
+    assert received[0].code == expected_code
+    assert received[0].source == InputSource.MOUSE
+    assert holder["listener"].join_count == 1
+
+
+def test_mouse_adapter_ignores_unsupported_extra_buttons_without_error() -> None:
+    holder: dict[str, _FakeListener] = {}
+
+    def _factory(on_click):
+        listener = _FakeListener(on_click=on_click)
+        holder["listener"] = listener
+        return listener
+
+    received = []
+    errors = []
+    adapter = MouseInputAdapter(
+        listener_factory=_factory,
+        error_callback=errors.append,
+    )
+    adapter.set_event_callback(received.append)
+    adapter.start()
+
+    holder["listener"].on_click(0, 0, SimpleNamespace(name="button8"), True)
+    holder["listener"].on_click(0, 0, SimpleNamespace(name="x3"), True)
+    adapter.stop()
+
+    assert received == []
+    assert errors == []
+    assert holder["listener"].join_count == 1
 
 
 def test_gamepad_adapter_gracefully_starts_without_connected_device() -> None:
@@ -346,6 +437,56 @@ def test_gamepad_adapter_emits_standardized_button_events() -> None:
 
     assert received[0].code == "Buttons7"
     assert received[0].source == InputSource.GAMEPAD
+
+
+def test_gamepad_adapter_routes_controller_input_to_tracker_engine() -> None:
+    fake_pygame = _FakePygame(joystick_count=1)
+    adapter = GamepadInputAdapter(
+        pygame_module=fake_pygame,
+        poll_interval_seconds=0.001,
+    )
+    engine = TrackerInputEngine(
+        skill_items=[SkillItem(id=31, select_key=None, skill_key="Buttons7")]
+    )
+    routed: list[tuple[str, list[int]]] = []
+    router = InputRouter(
+        tracker_engine=engine,
+        adapters=[adapter],
+        on_triggered=lambda event, items: routed.append(
+            (event.code, [item.id for item in items])
+        ),
+    )
+
+    router.start()
+    fake_pygame.event.push(_FakePygameEvent(type=fake_pygame.JOYBUTTONDOWN, button=7))
+
+    assert _wait_until(lambda: routed == [("Buttons7", [31])])
+    router.stop()
+
+    assert adapter.is_running is False
+    assert fake_pygame.init_count == 1
+    assert fake_pygame.quit_count == 1
+
+
+def test_gamepad_adapter_ignores_unsupported_button_indices_without_error() -> None:
+    fake_pygame = _FakePygame(joystick_count=1)
+    received = []
+    errors = []
+    adapter = GamepadInputAdapter(
+        pygame_module=fake_pygame,
+        error_callback=errors.append,
+        poll_interval_seconds=0.001,
+    )
+    adapter.set_event_callback(received.append)
+
+    adapter.start()
+    fake_pygame.event.push(_FakePygameEvent(type=fake_pygame.JOYBUTTONDOWN, button=10))
+    time.sleep(0.02)
+    adapter.stop()
+
+    assert received == []
+    assert errors == []
+    assert adapter.is_running is False
 
 
 def test_gamepad_adapter_cleans_up_when_thread_start_fails() -> None:

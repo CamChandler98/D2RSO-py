@@ -49,6 +49,7 @@ from .settings_store import (
     save_settings,
 )
 from .tracker_engine import TrackerInputEngine, process_input_event
+from .tracker_runtime import TrackerRuntimeController
 
 __all__ = [
     "ActiveCountdown",
@@ -74,6 +75,7 @@ __all__ = [
     "SkillItem",
     "TrackerInputEngine",
     "TrackerProfile",
+    "TrackerRuntimeController",
     "default_settings_dir",
     "default_settings_path",
     "gamepad_event",
