@@ -46,7 +46,7 @@ def run() -> None:
     if owns_app:
         auto_exit_delay_ms = _get_auto_exit_delay_ms()
         if auto_exit_delay_ms is not None:
-            QtCore.QTimer.singleShot(auto_exit_delay_ms, app.quit)
+            QtCore.QTimer.singleShot(auto_exit_delay_ms, window.exit_to_desktop)
         app.exec()
 
 
