@@ -45,6 +45,7 @@ def _flush_qt_events() -> None:
 
 def test_format_remaining_seconds_rounds_up_to_match_countdown_style():
     assert format_remaining_seconds(5.0) == "5"
+    assert format_remaining_seconds(4.0000001) == "4"
     assert format_remaining_seconds(4.01) == "5"
     assert format_remaining_seconds(0.1) == "1"
     assert format_remaining_seconds(0.0) == "0"

@@ -26,11 +26,15 @@ _SWP_NOMOVE = 0x0002
 _SWP_NOZORDER = 0x0004
 _SWP_NOACTIVATE = 0x0010
 _SWP_FRAMECHANGED = 0x0020
+_DISPLAY_ROUNDING_EPSILON = 1e-6
 
 
 def format_remaining_seconds(remaining_seconds: float) -> str:
     """Return display-friendly countdown text."""
     value = max(0.0, float(remaining_seconds))
+    nearest_integer = round(value)
+    if abs(value - nearest_integer) <= _DISPLAY_ROUNDING_EPSILON:
+        return str(int(nearest_integer))
     return str(int(ceil(value)))
 
 
