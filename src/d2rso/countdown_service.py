@@ -140,9 +140,9 @@ class CountdownService:
                 type=CountdownEventType.REMOVED,
                 skill_id=skill_id,
                 duration_seconds=state.duration_seconds,
-                remaining_seconds=state.remaining_seconds(resolved_now)
-                if not completed
-                else 0.0,
+                remaining_seconds=(
+                    state.remaining_seconds(resolved_now) if not completed else 0.0
+                ),
                 completed=completed,
             )
         )
