@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -25,7 +27,26 @@ _KEYS_SPEC = (
 )
 
 _DEFAULT_ASSETS_DIR = Path("assets") / "skills"
+_ASSETS_DIR_ENV_VAR = "D2RSO_ASSETS_DIR"
 _IMAGE_EXTENSIONS = {".bmp", ".gif", ".ico", ".jpeg", ".jpg", ".png", ".webp"}
+
+
+def _default_assets_dir() -> Path:
+    override = os.environ.get(_ASSETS_DIR_ENV_VAR)
+    if override:
+        return Path(override).expanduser()
+
+    bundled_root = getattr(sys, "_MEIPASS", None)
+    if bundled_root:
+        bundled_assets_dir = Path(bundled_root) / _DEFAULT_ASSETS_DIR
+        if bundled_assets_dir.exists():
+            return bundled_assets_dir
+
+    source_assets_dir = Path(__file__).resolve().parents[2] / _DEFAULT_ASSETS_DIR
+    if source_assets_dir.exists():
+        return source_assets_dir
+
+    return Path.cwd() / _DEFAULT_ASSETS_DIR
 
 
 def _normalize_lookup(value: str) -> str:
@@ -86,8 +107,7 @@ class KeyIconRegistry:
 
     def __init__(self, assets_dir: str | Path | None = None) -> None:
         if assets_dir is None:
-            project_root = Path(__file__).resolve().parents[2]
-            self.assets_dir = project_root / _DEFAULT_ASSETS_DIR
+            self.assets_dir = _default_assets_dir()
         else:
             self.assets_dir = Path(assets_dir)
 

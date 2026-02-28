@@ -264,6 +264,7 @@ class CooldownOverlayWindow(QtWidgets.QWidget):
         self._skill_items_by_id: dict[int, SkillItem] = {}
         self._widgets_by_skill_id: dict[int, _OverlayTrackerItemWidget] = {}
         self._countdown_service: CountdownService | None = None
+        self._insert_left_mode = bool(self._settings.is_tracker_insert_to_left)
 
         self._event_bridge = _CountdownEventBridge(self)
         self._event_bridge.event_received.connect(
@@ -276,16 +277,7 @@ class CooldownOverlayWindow(QtWidgets.QWidget):
         self._poll_timer.setTimerType(QtCore.Qt.TimerType.PreciseTimer)
         self._poll_timer.timeout.connect(self._poll_countdowns)
 
-        self._icon_size = QtCore.QSize(
-            max(
-                _MIN_ICON_SIZE_PX,
-                int(_BASE_ICON_SIZE_PX * float(self._settings.form_scale_x)),
-            ),
-            max(
-                _MIN_ICON_SIZE_PX,
-                int(_BASE_ICON_SIZE_PX * float(self._settings.form_scale_y)),
-            ),
-        )
+        self._icon_size = self._build_icon_size()
 
         self._init_window()
         self._init_layout()
@@ -328,6 +320,36 @@ class CooldownOverlayWindow(QtWidgets.QWidget):
             widget.set_icon_path(self._resolve_icon_path(skill_id))
         if self._preview_mode:
             self._render_preview_items()
+
+    def refresh_from_settings(self) -> None:
+        """Rebuild visible tracker presentation from the latest settings values."""
+        previous_insert_left = self._insert_left_mode
+        self._insert_left_mode = bool(self._settings.is_tracker_insert_to_left)
+        self._icon_size = self._build_icon_size()
+        self._items_layout.setDirection(self._resolve_direction())
+
+        if self._preview_mode:
+            self._render_preview_items()
+            self._apply_mode_presentation()
+            return
+
+        snapshots = self.snapshot_active_trackers()
+        ordered_skill_ids = [snapshot.skill_id for snapshot in snapshots]
+        remaining_by_skill_id = {
+            snapshot.skill_id: snapshot.remaining_seconds for snapshot in snapshots
+        }
+
+        if previous_insert_left and not self._insert_left_mode:
+            ordered_skill_ids.reverse()
+
+        self._clear_tracker_widgets()
+        for skill_id in ordered_skill_ids:
+            self._upsert_tracker_widget(
+                skill_id=skill_id,
+                remaining_seconds=remaining_by_skill_id.get(skill_id, 0.0),
+            )
+
+        self._apply_mode_presentation()
 
     def bind_countdown_service(self, countdown_service: CountdownService) -> None:
         """Subscribe to countdown events and begin UI polling for updates."""
@@ -420,6 +442,18 @@ class CooldownOverlayWindow(QtWidgets.QWidget):
         self._settings.tracker_x = int(safe_position.x())
         self._settings.tracker_y = int(safe_position.y())
         return safe_position
+
+    def _build_icon_size(self) -> QtCore.QSize:
+        return QtCore.QSize(
+            max(
+                _MIN_ICON_SIZE_PX,
+                int(_BASE_ICON_SIZE_PX * float(self._settings.form_scale_x)),
+            ),
+            max(
+                _MIN_ICON_SIZE_PX,
+                int(_BASE_ICON_SIZE_PX * float(self._settings.form_scale_y)),
+            ),
+        )
 
     def _init_layout(self) -> None:
         self.setStyleSheet("""

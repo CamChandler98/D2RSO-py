@@ -206,6 +206,7 @@ class Settings:
     red_overlay_seconds: int = 0
     red_tracker_overlay_sec: int = 0
     start_tracker_on_app_run: bool = False
+    minimize_to_tray: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -251,6 +252,8 @@ class Settings:
             self.form_scale_x = DEFAULT_FORM_SCALE
         if self.form_scale_y <= 0:
             self.form_scale_y = DEFAULT_FORM_SCALE
+        self.start_tracker_on_app_run = _as_bool(self.start_tracker_on_app_run, False)
+        self.minimize_to_tray = _as_bool(self.minimize_to_tray, False)
         red_overlay_seconds = self.red_overlay_seconds_effective
         self.red_overlay_seconds = red_overlay_seconds
         self.red_tracker_overlay_sec = red_overlay_seconds
@@ -271,6 +274,7 @@ class Settings:
             "red_overlay_seconds": red_overlay_seconds,
             "red_tracker_overlay_sec": red_overlay_seconds,
             "start_tracker_on_app_run": self.start_tracker_on_app_run,
+            "minimize_to_tray": self.minimize_to_tray,
         }
 
     @classmethod
@@ -359,6 +363,15 @@ class Settings:
                     data,
                     "start_tracker_on_app_run",
                     "StartTrackerOnAppRun",
+                    default=False,
+                ),
+                False,
+            ),
+            minimize_to_tray=_as_bool(
+                _get_value(
+                    data,
+                    "minimize_to_tray",
+                    "MinimizeToTray",
                     default=False,
                 ),
                 False,

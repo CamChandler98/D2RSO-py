@@ -14,6 +14,7 @@ from d2rso.models import (
     Settings,
     SkillItem,
 )
+from d2rso.options_dialog import OptionsDialog
 
 
 class _MemorySettingsStore:
@@ -60,6 +61,44 @@ class _FakeInputRouter:
         self._on_triggered(keyboard_event("f1"), list(skill_items))
 
 
+class _FakeSignal:
+    def __init__(self) -> None:
+        self._callbacks: list = []
+
+    def connect(self, callback) -> None:
+        self._callbacks.append(callback)
+
+    def emit(self, *args) -> None:
+        for callback in list(self._callbacks):
+            callback(*args)
+
+
+class _FakeTrayIcon:
+    def __init__(self, _icon: QtGui.QIcon, _parent: QtWidgets.QWidget | None) -> None:
+        self.activated = _FakeSignal()
+        self.context_menu: QtWidgets.QMenu | None = None
+        self.tooltip = ""
+        self.visible = False
+        self.hide_count = 0
+        self.deleted = False
+
+    def setToolTip(self, text: str) -> None:
+        self.tooltip = text
+
+    def setContextMenu(self, menu: QtWidgets.QMenu) -> None:
+        self.context_menu = menu
+
+    def show(self) -> None:
+        self.visible = True
+
+    def hide(self) -> None:
+        self.visible = False
+        self.hide_count += 1
+
+    def deleteLater(self) -> None:
+        self.deleted = True
+
+
 def _get_qapp() -> QtWidgets.QApplication:
     app = QtWidgets.QApplication.instance()
     if app is None:
@@ -78,6 +117,8 @@ def _flush_events() -> None:
 
 def _build_window(
     settings: Settings,
+    *,
+    enable_tray: bool = False,
 ) -> tuple[MainWindow, _MemorySettingsStore, _FakeInputRouter]:
     _get_qapp()
     store = _MemorySettingsStore(settings)
@@ -92,10 +133,20 @@ def _build_window(
         settings_store=store,
         icon_registry=KeyIconRegistry(assets_dir="does-not-exist"),
         input_router_factory=_router_factory,
+        enable_tray=enable_tray,
+        tray_icon_factory=_FakeTrayIcon if enable_tray else None,
     )
     window.show()
     _flush_events()
     return window, store, holder["router"]
+
+
+def _open_options_dialog(window: MainWindow) -> OptionsDialog:
+    window.options_button.click()
+    _flush_events()
+    dialog = window._options_dialog
+    assert isinstance(dialog, OptionsDialog)
+    return dialog
 
 
 def _checkbox_from_cell(wrapper: QtWidgets.QWidget) -> QtWidgets.QCheckBox:
@@ -393,8 +444,7 @@ def test_play_stop_and_preview_buttons_reflect_runtime_state():
     assert window.is_preview_visible is False
     assert window.play_button.text() == "Stop"
     assert window.preview_button.isEnabled() is False
-    assert window.show_digits_checkbox.isEnabled() is True
-    assert window.red_overlay_seconds_spin.isEnabled() is True
+    assert window.options_button.isEnabled() is True
     assert window.profile_combo.isEnabled() is False
     assert window.skill_table.isEnabled() is False
     assert window.status_label.text() == "Running"
@@ -465,27 +515,121 @@ def test_runtime_controls_cover_play_stop_preview_acceptance_flow():
     window.close()
 
 
-def test_overlay_option_controls_save_back_to_settings_store():
+def test_options_dialog_saves_settings_and_updates_preview_overlay():
     settings = Settings(
         show_digits_in_tracker=False,
         red_overlay_seconds=0,
+        form_scale_x=1.0,
+        form_scale_y=1.0,
+        is_tracker_insert_to_left=False,
+        is_tracker_vertical=False,
+        start_tracker_on_app_run=False,
+        minimize_to_tray=False,
         last_selected_profile_id=0,
         profiles=[Profile(id=0, name="Default")],
-        skill_items=[SkillItem(id=31, profile_id=0, skill_key="F1", time_length=4.0)],
+        skill_items=[
+            SkillItem(id=31, profile_id=0, skill_key="F1", time_length=4.0),
+            SkillItem(id=32, profile_id=0, skill_key="F2", time_length=2.0),
+        ],
     )
     window, store, _router = _build_window(settings)
-
-    assert window.show_digits_checkbox.isChecked() is False
-    assert window.red_overlay_seconds_spin.value() == 0
-
-    window.show_digits_checkbox.setChecked(True)
-    window.red_overlay_seconds_spin.setValue(3)
+    window._toggle_preview()
     _flush_events()
 
+    assert window._preview_overlay is not None
+    before_icon_size = window._preview_overlay._widgets_by_skill_id[
+        31
+    ]._icon_label.size()
+
+    dialog = _open_options_dialog(window)
+
+    dialog.insert_left_checkbox.setChecked(True)
+    dialog.vertical_checkbox.setChecked(True)
+    dialog.show_digits_checkbox.setChecked(True)
+    dialog.start_on_launch_checkbox.setChecked(True)
+    dialog.minimize_to_tray_checkbox.setChecked(True)
+    dialog.scale_slider.setValue(150)
+    dialog.red_overlay_seconds_spin.setValue(3)
+    _flush_events()
+
+    assert window._preview_overlay is not None
+    assert window._preview_overlay.active_skill_ids() == [32, 31]
+    assert (
+        window._preview_overlay._items_layout.direction()
+        == QtWidgets.QBoxLayout.Direction.TopToBottom
+    )
+    snapshots = window._preview_overlay.snapshot_active_trackers()
+    assert [snapshot.skill_id for snapshot in snapshots] == [32, 31]
+    assert all(snapshot.digits_visible is True for snapshot in snapshots)
+    assert snapshots[0].warning_active is True
+    after_icon_size = window._preview_overlay._widgets_by_skill_id[
+        31
+    ]._icon_label.size()
+    assert after_icon_size.width() > before_icon_size.width()
+
     saved = store.saved_settings
+    assert saved.is_tracker_insert_to_left is True
+    assert saved.is_tracker_vertical is True
     assert saved.show_digits_in_tracker is True
+    assert saved.start_tracker_on_app_run is True
+    assert saved.minimize_to_tray is True
+    assert saved.form_scale_x == 1.5
+    assert saved.form_scale_y == 1.5
     assert saved.red_overlay_seconds == 3
     assert saved.red_tracker_overlay_sec == 3
+
+    window.close()
+
+
+def test_options_dialog_updates_runtime_overlay_behavior_live():
+    settings = Settings(
+        show_digits_in_tracker=True,
+        red_overlay_seconds=0,
+        form_scale_x=1.0,
+        form_scale_y=1.0,
+        is_tracker_insert_to_left=False,
+        is_tracker_vertical=False,
+        last_selected_profile_id=0,
+        profiles=[Profile(id=0, name="Default")],
+        skill_items=[
+            SkillItem(id=51, profile_id=0, skill_key="F1", time_length=2.0),
+            SkillItem(id=52, profile_id=0, skill_key="F2", time_length=4.0),
+        ],
+    )
+    window, _store, router = _build_window(settings)
+
+    window._toggle_playback()
+    _flush_events()
+    router.emit_trigger(window.selected_skill_items())
+    _flush_events()
+
+    assert window._runtime_overlay is not None
+    before_icon_size = window._runtime_overlay._widgets_by_skill_id[
+        51
+    ]._icon_label.size()
+
+    dialog = _open_options_dialog(window)
+    dialog.insert_left_checkbox.setChecked(True)
+    dialog.vertical_checkbox.setChecked(True)
+    dialog.show_digits_checkbox.setChecked(False)
+    dialog.scale_slider.setValue(140)
+    dialog.red_overlay_seconds_spin.setValue(3)
+    _flush_events()
+
+    assert window._runtime_overlay is not None
+    assert window._runtime_overlay.active_skill_ids() == [52, 51]
+    assert (
+        window._runtime_overlay._items_layout.direction()
+        == QtWidgets.QBoxLayout.Direction.TopToBottom
+    )
+    snapshots = window._runtime_overlay.snapshot_active_trackers()
+    assert [snapshot.skill_id for snapshot in snapshots] == [52, 51]
+    assert all(snapshot.digits_visible is False for snapshot in snapshots)
+    assert snapshots[1].warning_active is True
+    after_icon_size = window._runtime_overlay._widgets_by_skill_id[
+        51
+    ]._icon_label.size()
+    assert after_icon_size.width() > before_icon_size.width()
 
     window.close()
 
@@ -510,6 +654,25 @@ def test_runtime_overlay_receives_triggered_skill_updates():
     assert [snapshot.skill_id for snapshot in snapshots] == [21]
     assert snapshots[0].digits_visible is True
     assert snapshots[0].digits_text == "4"
+
+    window.close()
+
+
+def test_start_tracker_on_app_run_autostarts_runtime_on_window_open():
+    settings = Settings(
+        start_tracker_on_app_run=True,
+        last_selected_profile_id=0,
+        profiles=[Profile(id=0, name="Default")],
+        skill_items=[SkillItem(id=71, profile_id=0, skill_key="F1", time_length=4.0)],
+    )
+    window, _store, router = _build_window(settings)
+
+    assert router.is_running is True
+    assert window.is_playing is True
+    assert window._runtime_overlay is not None
+    assert window.play_button.text() == "Stop"
+    assert window.preview_button.isEnabled() is False
+    assert window.status_label.text() == "Running"
 
     window.close()
 
@@ -569,6 +732,73 @@ def test_preview_reposition_updates_saved_tracker_coordinates():
     assert saved.tracker_y == 330
 
     window.close()
+
+
+def test_close_hides_window_to_tray_and_tray_action_reopens_it():
+    settings = Settings(
+        last_selected_profile_id=0,
+        profiles=[Profile(id=0, name="Default")],
+        skill_items=[SkillItem(id=81, profile_id=0, skill_key="F1", time_length=4.0)],
+    )
+    window, _store, _router = _build_window(settings, enable_tray=True)
+
+    assert isinstance(window._tray_icon, _FakeTrayIcon)
+    assert window._tray_toggle_action is not None
+    assert window._tray_toggle_action.text() == "Hide"
+
+    window._toggle_preview()
+    _flush_events()
+    assert window.is_preview_visible is True
+
+    window.close()
+    _flush_events()
+
+    assert window.isVisible() is False
+    assert window.is_preview_visible is False
+    assert window._tray_toggle_action.text() == "Open"
+
+    window._tray_toggle_action.trigger()
+    _flush_events()
+
+    assert window.isVisible() is True
+    assert window._tray_toggle_action.text() == "Hide"
+
+    window.exit_to_desktop()
+    _flush_events()
+
+
+def test_tray_exit_performs_clean_shutdown_and_saves_runtime_position():
+    settings = Settings(
+        last_selected_profile_id=0,
+        profiles=[Profile(id=0, name="Default")],
+        skill_items=[SkillItem(id=82, profile_id=0, skill_key="F1", time_length=4.0)],
+    )
+    window, store, router = _build_window(settings, enable_tray=True)
+
+    window._toggle_playback()
+    _flush_events()
+    assert window._runtime_overlay is not None
+
+    window._runtime_overlay.move(123, 456)
+    _flush_events()
+    tray_icon = window._tray_icon
+    assert isinstance(tray_icon, _FakeTrayIcon)
+    assert window._tray_exit_action is not None
+
+    window.close()
+    _flush_events()
+    assert window.isVisible() is False
+    assert router.is_running is True
+
+    window._tray_exit_action.trigger()
+    _flush_events()
+
+    assert router.is_running is False
+    assert router.stop_count == 1
+    assert tray_icon.deleted is True
+    saved = store.saved_settings
+    assert saved.tracker_x == 123
+    assert saved.tracker_y == 456
 
 
 def test_save_failures_surface_in_status_label():

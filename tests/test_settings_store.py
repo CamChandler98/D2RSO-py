@@ -45,6 +45,7 @@ def test_save_then_load_round_trip(tmp_path):
         show_digits_in_tracker=True,
         red_overlay_seconds=2,
         start_tracker_on_app_run=True,
+        minimize_to_tray=True,
     )
 
     store.save(original)
@@ -175,6 +176,7 @@ def test_new_red_overlay_seconds_key_is_loaded_and_saved(tmp_path):
                 "profiles": [{"id": 0, "name": "Default"}],
                 "skill_items": [],
                 "red_overlay_seconds": 4,
+                "minimize_to_tray": True,
             }
         ),
         encoding="utf-8",
@@ -184,8 +186,10 @@ def test_new_red_overlay_seconds_key_is_loaded_and_saved(tmp_path):
     loaded = store.load()
     assert loaded.red_overlay_seconds == 4
     assert loaded.red_tracker_overlay_sec == 4
+    assert loaded.minimize_to_tray is True
 
     store.save(loaded)
     reloaded_payload = json.loads(file_path.read_text(encoding="utf-8"))
     assert reloaded_payload["red_overlay_seconds"] == 4
     assert reloaded_payload["red_tracker_overlay_sec"] == 4
+    assert reloaded_payload["minimize_to_tray"] is True

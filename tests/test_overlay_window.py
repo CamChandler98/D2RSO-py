@@ -110,9 +110,7 @@ def test_apply_win32_click_through_toggles_extended_style_flags(monkeypatch):
             cy: int,
             flags: int,
         ) -> int:
-            self.set_pos_calls.append(
-                (hwnd, hwnd_insert_after, x, y, cx, cy, flags)
-            )
+            self.set_pos_calls.append((hwnd, hwnd_insert_after, x, y, cx, cy, flags))
             return 1
 
     fake_user32 = _FakeUser32()
@@ -252,6 +250,61 @@ def test_overlay_respects_left_insert_order_and_hidden_digits_setting(tmp_path):
     overlay.close()
 
 
+def test_overlay_refresh_from_settings_rebuilds_preview_layout_scale_and_warning(
+    tmp_path,
+):
+    _get_qapp()
+    assets_dir = tmp_path / "assets" / "skills"
+    assets_dir.mkdir(parents=True)
+    (assets_dir / "orb.png").write_bytes(_PNG_1X1)
+
+    registry = KeyIconRegistry(assets_dir=assets_dir)
+    settings = Settings(
+        is_tracker_insert_to_left=False,
+        is_tracker_vertical=False,
+        show_digits_in_tracker=False,
+        red_overlay_seconds=0,
+        form_scale_x=1.0,
+        form_scale_y=1.0,
+    )
+    overlay = CooldownOverlayWindow(
+        settings=settings,
+        icon_registry=registry,
+        preview_mode=True,
+    )
+    overlay.set_skill_items(
+        [
+            SkillItem(id=1, icon_file_name="orb.png", time_length=4.0, skill_key="F1"),
+            SkillItem(id=2, icon_file_name="orb.png", time_length=2.0, skill_key="F2"),
+        ]
+    )
+
+    before_icon_size = overlay._widgets_by_skill_id[1]._icon_label.size()
+    assert overlay.active_skill_ids() == [1, 2]
+
+    settings.is_tracker_insert_to_left = True
+    settings.is_tracker_vertical = True
+    settings.show_digits_in_tracker = True
+    settings.red_overlay_seconds = 3
+    settings.form_scale_x = 1.5
+    settings.form_scale_y = 1.5
+    overlay.refresh_from_settings()
+    _flush_qt_events()
+
+    assert overlay.active_skill_ids() == [2, 1]
+    assert (
+        overlay._items_layout.direction() == QtWidgets.QBoxLayout.Direction.TopToBottom
+    )
+    snapshots = overlay.snapshot_active_trackers()
+    assert [snapshot.skill_id for snapshot in snapshots] == [2, 1]
+    assert all(snapshot.digits_visible is True for snapshot in snapshots)
+    assert snapshots[0].warning_active is True
+    after_icon_size = overlay._widgets_by_skill_id[1]._icon_label.size()
+    assert after_icon_size.width() > before_icon_size.width()
+
+    overlay.close()
+
+
 def test_overlay_warning_activates_at_or_below_threshold(tmp_path):
     _get_qapp()
     assets_dir = tmp_path / "assets" / "skills"
@@ -359,5 +412,65 @@ def test_overlay_warning_threshold_updates_without_restart(tmp_path):
     snapshots = overlay.snapshot_active_trackers()
     assert snapshots[0].digits_text == "1"
     assert snapshots[0].warning_active is False
+
+    overlay.close()
+
+
+def test_overlay_refresh_from_settings_rebuilds_runtime_layout_without_restart(
+    tmp_path,
+):
+    _get_qapp()
+    assets_dir = tmp_path / "assets" / "skills"
+    assets_dir.mkdir(parents=True)
+    (assets_dir / "orb.png").write_bytes(_PNG_1X1)
+
+    registry = KeyIconRegistry(assets_dir=assets_dir)
+    settings = Settings(
+        is_tracker_insert_to_left=False,
+        is_tracker_vertical=False,
+        show_digits_in_tracker=True,
+        red_overlay_seconds=0,
+        form_scale_x=1.0,
+        form_scale_y=1.0,
+    )
+    service = CountdownService(time_provider=FakeClock())
+    overlay = CooldownOverlayWindow(
+        settings=settings,
+        icon_registry=registry,
+        poll_interval_ms=1000,
+    )
+    overlay.set_skill_items(
+        [
+            SkillItem(id=21, icon_file_name="orb.png", time_length=2.0, skill_key="F1"),
+            SkillItem(id=22, icon_file_name="orb.png", time_length=4.0, skill_key="F2"),
+        ]
+    )
+    overlay.bind_countdown_service(service)
+
+    service.refresh(skill_id=21, duration_seconds=2.0)
+    service.refresh(skill_id=22, duration_seconds=4.0)
+    _flush_qt_events()
+    before_icon_size = overlay._widgets_by_skill_id[21]._icon_label.size()
+    assert overlay.active_skill_ids() == [21, 22]
+
+    settings.is_tracker_insert_to_left = True
+    settings.is_tracker_vertical = True
+    settings.show_digits_in_tracker = False
+    settings.red_overlay_seconds = 3
+    settings.form_scale_x = 1.4
+    settings.form_scale_y = 1.4
+    overlay.refresh_from_settings()
+    _flush_qt_events()
+
+    assert overlay.active_skill_ids() == [22, 21]
+    assert (
+        overlay._items_layout.direction() == QtWidgets.QBoxLayout.Direction.TopToBottom
+    )
+    snapshots = overlay.snapshot_active_trackers()
+    assert [snapshot.skill_id for snapshot in snapshots] == [22, 21]
+    assert all(snapshot.digits_visible is False for snapshot in snapshots)
+    assert snapshots[1].warning_active is True
+    after_icon_size = overlay._widgets_by_skill_id[21]._icon_label.size()
+    assert after_icon_size.width() > before_icon_size.width()
 
     overlay.close()

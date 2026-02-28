@@ -24,6 +24,9 @@ dev = [
     "black>=24.2",
     "mypy>=1.8",
 ]
+build = [
+    "pyinstaller==6.11.1",
+]
 
 [project.scripts]
 d2rso = "d2rso.main:run"

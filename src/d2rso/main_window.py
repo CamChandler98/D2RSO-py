@@ -17,6 +17,7 @@ from .models import (
     Settings,
     SkillItem,
 )
+from .options_dialog import OptionsDialog
 from .overlay_window import CooldownOverlayWindow
 from .settings_store import SettingsStore
 from .tracker_runtime import TrackerRuntimeController
@@ -40,6 +41,8 @@ class MainWindow(QtWidgets.QMainWindow):
         icon_registry: KeyIconRegistry | None = None,
         input_router_factory: Callable[..., Any] | None = None,
         countdown_service_factory: Callable[[], CountdownService] | None = None,
+        enable_tray: bool | None = None,
+        tray_icon_factory: Callable[..., Any] | None = None,
         parent: QtWidgets.QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -48,6 +51,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._settings.ensure_defaults()
 
         self._icon_registry = icon_registry or get_key_icon_registry()
+        self._options_dialog: OptionsDialog | None = None
         self._preview_overlay: CooldownOverlayWindow | None = None
         self._runtime_overlay: CooldownOverlayWindow | None = None
         self._tracker_runtime = TrackerRuntimeController(
@@ -58,13 +62,24 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tracker_runtime.error_occurred.connect(self._handle_runtime_error)
 
         self._loading_ui = False
+        self._enable_tray = enable_tray
+        self._tray_icon_factory = tray_icon_factory or QtWidgets.QSystemTrayIcon
+        self._tray_icon: Any | None = None
+        self._tray_menu: QtWidgets.QMenu | None = None
+        self._tray_toggle_action: QtGui.QAction | None = None
+        self._tray_exit_action: QtGui.QAction | None = None
+        self._is_exiting = False
+        self._shutdown_complete = False
 
         self._init_window()
         self._init_layout()
+        self._init_tray_icon()
         self._refresh_profiles(
             selected_profile_id=self._settings.last_selected_profile_id
         )
         self._update_control_states()
+        if self._settings.start_tracker_on_app_run:
+            QtCore.QTimer.singleShot(0, self._start_tracking_from_settings)
 
     @property
     def is_playing(self) -> bool:
@@ -78,14 +93,36 @@ class MainWindow(QtWidgets.QMainWindow):
     def settings(self) -> Settings:
         return self._settings
 
+    def changeEvent(self, event: QtCore.QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() != QtCore.QEvent.Type.WindowStateChange:
+            return
+        self._sync_tray_actions()
+        if self._should_hide_minimized_window():
+            QtCore.QTimer.singleShot(0, self._hide_minimized_window_to_tray)
+
+    def hideEvent(self, event: QtGui.QHideEvent) -> None:
+        super().hideEvent(event)
+        self._sync_tray_actions()
+
+    def showEvent(self, event: QtGui.QShowEvent) -> None:
+        super().showEvent(event)
+        self._sync_tray_actions()
+
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         try:
-            self._stop_tracking()
-            self._close_preview_overlay()
-            self._save_settings()
+            if self._should_hide_to_tray_on_close():
+                event.ignore()
+                self._hide_to_tray()
+                return
+            self._perform_shutdown()
             super().closeEvent(event)
         except KeyboardInterrupt:
             event.accept()
+
+    def exit_to_desktop(self) -> None:
+        self._is_exiting = True
+        self.close()
 
     def add_profile(self, name: str) -> Profile | None:
         normalized_name = name.strip()
@@ -185,6 +222,126 @@ class MainWindow(QtWidgets.QMainWindow):
             item for item in self._settings.skill_items if item.profile_id == profile_id
         ]
 
+    def _init_tray_icon(self) -> None:
+        if not self._is_tray_enabled():
+            return
+
+        tray_icon = self._tray_icon_factory(self._window_icon_for_tray(), self)
+        tray_icon.setToolTip(self.windowTitle())
+
+        tray_menu = QtWidgets.QMenu(self)
+        toggle_action = tray_menu.addAction("Hide")
+        toggle_action.triggered.connect(self._toggle_main_window_visibility)
+
+        exit_action = tray_menu.addAction("Exit")
+        exit_action.triggered.connect(self.exit_to_desktop)
+
+        tray_icon.activated.connect(self._on_tray_icon_activated)
+        tray_icon.setContextMenu(tray_menu)
+        tray_icon.show()
+
+        self._tray_icon = tray_icon
+        self._tray_menu = tray_menu
+        self._tray_toggle_action = toggle_action
+        self._tray_exit_action = exit_action
+        self._sync_tray_actions()
+
+    def _is_tray_enabled(self) -> bool:
+        if self._enable_tray is not None:
+            return bool(self._enable_tray)
+        return bool(QtWidgets.QSystemTrayIcon.isSystemTrayAvailable())
+
+    def _window_icon_for_tray(self) -> QtGui.QIcon:
+        icon = self.windowIcon()
+        if icon.isNull():
+            icon = self.style().standardIcon(
+                QtWidgets.QStyle.StandardPixmap.SP_ComputerIcon
+            )
+            self.setWindowIcon(icon)
+        return icon
+
+    def _is_window_open_for_interaction(self) -> bool:
+        return self.isVisible() and not self.isMinimized()
+
+    def _sync_tray_actions(self) -> None:
+        if self._tray_toggle_action is None:
+            return
+        self._tray_toggle_action.setText(
+            "Hide" if self._is_window_open_for_interaction() else "Open"
+        )
+
+    def _toggle_main_window_visibility(self) -> None:
+        if self._is_window_open_for_interaction():
+            self._hide_to_tray()
+        else:
+            self._show_from_tray()
+
+    def _show_from_tray(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        self._sync_tray_actions()
+
+    def _hide_to_tray(self) -> None:
+        if self._options_dialog is not None:
+            self._options_dialog.close()
+        self._close_preview_overlay()
+        self._update_control_states()
+        self._save_settings()
+        self.hide()
+        self._sync_tray_actions()
+
+    def _should_hide_to_tray_on_close(self) -> bool:
+        return self._tray_icon is not None and not self._is_exiting
+
+    def _should_hide_minimized_window(self) -> bool:
+        return (
+            self._tray_icon is not None
+            and self._settings.minimize_to_tray
+            and not self._is_exiting
+            and self.isMinimized()
+        )
+
+    def _hide_minimized_window_to_tray(self) -> None:
+        if not self._should_hide_minimized_window():
+            return
+        self.hide()
+        self.setWindowState(self.windowState() & ~QtCore.Qt.WindowState.WindowMinimized)
+        self._sync_tray_actions()
+
+    @QtCore.Slot(QtWidgets.QSystemTrayIcon.ActivationReason)
+    def _on_tray_icon_activated(
+        self,
+        reason: QtWidgets.QSystemTrayIcon.ActivationReason,
+    ) -> None:
+        if reason in {
+            QtWidgets.QSystemTrayIcon.ActivationReason.Trigger,
+            QtWidgets.QSystemTrayIcon.ActivationReason.DoubleClick,
+        }:
+            self._toggle_main_window_visibility()
+
+    def _perform_shutdown(self) -> None:
+        if self._shutdown_complete:
+            return
+        self._shutdown_complete = True
+        if self._options_dialog is not None:
+            self._options_dialog.close()
+        self._stop_tracking()
+        self._close_preview_overlay()
+        self._save_settings()
+        self._dispose_tray_icon()
+
+    def _dispose_tray_icon(self) -> None:
+        if self._tray_icon is None:
+            return
+        tray_icon = self._tray_icon
+        self._tray_icon = None
+        self._tray_menu = None
+        self._tray_toggle_action = None
+        self._tray_exit_action = None
+        tray_icon.hide()
+        tray_icon.deleteLater()
+
     def _init_window(self) -> None:
         self.setWindowTitle("D2R Skill Overlay")
         self.resize(980, 620)
@@ -209,6 +366,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.play_button.clicked.connect(self._toggle_playback)
         runtime_bar.addWidget(self.play_button)
 
+        self.options_button = QtWidgets.QPushButton("Options", self)
+        self.options_button.clicked.connect(self._open_options_dialog)
+        runtime_bar.addWidget(self.options_button)
+
         runtime_bar.addStretch(1)
 
         self.status_label = QtWidgets.QLabel("Idle", self)
@@ -216,36 +377,6 @@ class MainWindow(QtWidgets.QMainWindow):
         runtime_bar.addWidget(self.status_label)
 
         root.addLayout(runtime_bar)
-
-        overlay_options_bar = QtWidgets.QHBoxLayout()
-        overlay_options_bar.setSpacing(8)
-
-        overlay_options_bar.addWidget(QtWidgets.QLabel("Overlay", self))
-
-        self.show_digits_checkbox = QtWidgets.QCheckBox("Show Digits", self)
-        self.show_digits_checkbox.setToolTip("Show countdown digits on overlay icons.")
-        self.show_digits_checkbox.setChecked(self._settings.show_digits_in_tracker)
-        self.show_digits_checkbox.toggled.connect(self._on_show_digits_toggled)
-        overlay_options_bar.addWidget(self.show_digits_checkbox)
-
-        overlay_options_bar.addWidget(QtWidgets.QLabel("Red Warning (sec)", self))
-
-        self.red_overlay_seconds_spin = QtWidgets.QSpinBox(self)
-        self.red_overlay_seconds_spin.setRange(0, 600)
-        self.red_overlay_seconds_spin.setSingleStep(1)
-        self.red_overlay_seconds_spin.setValue(
-            self._settings.red_overlay_seconds_effective
-        )
-        self.red_overlay_seconds_spin.setToolTip(
-            "Apply red warning tint when remaining time is less than or equal to this value."
-        )
-        self.red_overlay_seconds_spin.valueChanged.connect(
-            self._on_red_overlay_seconds_changed
-        )
-        overlay_options_bar.addWidget(self.red_overlay_seconds_spin)
-
-        overlay_options_bar.addStretch(1)
-        root.addLayout(overlay_options_bar)
 
         profile_bar = QtWidgets.QHBoxLayout()
         profile_bar.setSpacing(6)
@@ -553,15 +684,11 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         elif field == "select_key":
             item.select_key = (
-                self._validated_key_code(value)
-                if value is not None
-                else None
+                self._validated_key_code(value) if value is not None else None
             )
         elif field == "skill_key":
             item.skill_key = (
-                self._validated_key_code(value)
-                if value is not None
-                else None
+                self._validated_key_code(value) if value is not None else None
             )
         else:
             return
@@ -661,25 +788,30 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_add_skill_clicked(self) -> None:
         self.add_skill_to_current_profile()
 
-    def _on_show_digits_toggled(self, checked: bool) -> None:
-        if self._loading_ui:
-            return
-        self._settings.show_digits_in_tracker = bool(checked)
-        self._save_settings()
-        self._apply_overlay_settings_update()
+    def _open_options_dialog(self) -> None:
+        if self._options_dialog is None:
+            dialog = OptionsDialog(settings=self._settings, parent=self)
+            dialog.settings_changed.connect(self._on_options_settings_changed)
+            dialog.finished.connect(self._on_options_dialog_finished)
+            self._options_dialog = dialog
+        self._options_dialog.show()
+        self._options_dialog.activateWindow()
 
-    def _on_red_overlay_seconds_changed(self, value: int) -> None:
-        if self._loading_ui:
-            return
-        self._settings.red_overlay_seconds = max(0, int(value))
+    def _on_options_dialog_finished(self, _result: int) -> None:
+        self._options_dialog = None
+
+    def _on_options_settings_changed(self) -> None:
         self._save_settings()
         self._apply_overlay_settings_update()
 
     def _apply_overlay_settings_update(self) -> None:
-        self._refresh_preview_skills()
         countdown_service = self._tracker_runtime.countdown_service
         if countdown_service is not None:
             countdown_service.emit_updates()
+        if self._preview_overlay is not None:
+            self._preview_overlay.refresh_from_settings()
+        if self._runtime_overlay is not None:
+            self._runtime_overlay.refresh_from_settings()
 
     def _toggle_preview(self) -> None:
         if self.is_playing:
@@ -746,6 +878,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._tracker_runtime.stop()
             except Exception:
                 pass
+
+    def _start_tracking_from_settings(self) -> None:
+        if not self._settings.start_tracker_on_app_run or self.is_playing:
+            return
+        self._start_tracking()
+        self._update_control_states()
 
     def _stop_tracking(self) -> None:
         self._dispose_runtime_overlay()

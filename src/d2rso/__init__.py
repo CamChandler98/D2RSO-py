@@ -36,6 +36,7 @@ from .key_icon_registry import (
 from .main import run
 from .main_window import MainWindow
 from .models import Profile, Settings, SkillItem, TrackerProfile
+from .options_dialog import OptionsDialog
 from .overlay_window import (
     CooldownOverlayWindow,
     OverlayTrackerSnapshot,
@@ -68,6 +69,7 @@ __all__ = [
     "KeyIconRegistry",
     "MouseInputAdapter",
     "MainWindow",
+    "OptionsDialog",
     "OverlayTrackerSnapshot",
     "Profile",
     "Settings",
