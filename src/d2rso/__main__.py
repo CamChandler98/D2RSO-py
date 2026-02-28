@@ -4,7 +4,10 @@ from __future__ import annotations
 
 
 def run() -> None:
-    from .main import run as _run
+    if __package__:
+        from .main import run as _run
+    else:
+        from d2rso.main import run as _run
 
     _run()
 

@@ -1,5 +1,8 @@
 import importlib
 import platform
+import sys
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -38,3 +41,17 @@ def test_dunder_main_import_is_safe():
 
     assert hasattr(module, "run")
     assert callable(module.run)
+
+
+def test_dunder_main_run_supports_execution_without_package_context(monkeypatch):
+    calls: list[str] = []
+    source = Path("src/d2rso/__main__.py").read_text(encoding="utf-8")
+    namespace = {"__name__": "frozen_entry", "__package__": None}
+    fake_main = SimpleNamespace(run=lambda: calls.append("run"))
+
+    monkeypatch.setitem(sys.modules, "d2rso.main", fake_main)
+
+    exec(compile(source, "src/d2rso/__main__.py", "exec"), namespace)
+    namespace["run"]()
+
+    assert calls == ["run"]
