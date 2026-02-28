@@ -7,6 +7,7 @@ import os
 import platform
 import threading
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from queue import Empty, Queue
 from typing import Any, Protocol
 
@@ -64,6 +65,121 @@ def _configure_pygame_headless_if_needed(pygame_module: Any | None = None) -> No
             return
 
     os.environ["SDL_VIDEODRIVER"] = "dummy"
+
+
+def _resolve_pygame_module(pygame_module: Any | None = None) -> Any:
+    if pygame_module is None:
+        _configure_pygame_headless_if_needed()
+        import pygame
+
+        return pygame
+    return pygame_module
+
+
+@dataclass(frozen=True, slots=True)
+class GamepadDeviceInfo:
+    """Connected gamepad metadata used for UI labeling."""
+
+    index: int
+    name: str
+    button_count: int
+
+
+def list_connected_gamepads(
+    *,
+    pygame_module: Any | None = None,
+) -> tuple[GamepadDeviceInfo, ...]:
+    """Return connected gamepads with their reported button counts."""
+    owns_pygame_init = False
+    owns_joystick_init = False
+    joystick_module: Any | None = None
+    joysticks: list[Any] = []
+
+    try:
+        pygame_module = _resolve_pygame_module(pygame_module)
+        _configure_pygame_headless_if_needed(pygame_module)
+
+        if hasattr(pygame_module, "get_init") and not pygame_module.get_init():
+            pygame_module.init()
+            owns_pygame_init = True
+
+        joystick_module = getattr(pygame_module, "joystick", None)
+        if joystick_module is None:
+            return ()
+
+        if hasattr(joystick_module, "get_init"):
+            if not joystick_module.get_init():
+                joystick_module.init()
+                owns_joystick_init = True
+        else:
+            init_fn = getattr(joystick_module, "init", None)
+            if callable(init_fn):
+                init_fn()
+                owns_joystick_init = True
+
+        count = max(0, int(joystick_module.get_count()))
+        devices: list[GamepadDeviceInfo] = []
+        for index in range(count):
+            joystick = joystick_module.Joystick(index)
+            joysticks.append(joystick)
+
+            init_fn = getattr(joystick, "init", None)
+            if callable(init_fn):
+                init_fn()
+
+            name = f"Gamepad {index}"
+            get_name = getattr(joystick, "get_name", None)
+            if callable(get_name):
+                try:
+                    candidate = str(get_name()).strip()
+                except Exception:
+                    candidate = ""
+                if candidate:
+                    name = candidate
+
+            button_count = 0
+            get_numbuttons = getattr(joystick, "get_numbuttons", None)
+            if callable(get_numbuttons):
+                try:
+                    button_count = max(0, int(get_numbuttons()))
+                except Exception:
+                    button_count = 0
+
+            devices.append(
+                GamepadDeviceInfo(
+                    index=index,
+                    name=name,
+                    button_count=button_count,
+                )
+            )
+
+        return tuple(devices)
+    except Exception:
+        return ()
+    finally:
+        for joystick in reversed(joysticks):
+            quit_fn = getattr(joystick, "quit", None)
+            if callable(quit_fn):
+                try:
+                    quit_fn()
+                except Exception:
+                    pass
+
+        if joystick_module is not None and owns_joystick_init:
+            quit_fn = getattr(joystick_module, "quit", None)
+            if callable(quit_fn):
+                try:
+                    quit_fn()
+                except Exception:
+                    pass
+
+        if owns_pygame_init:
+            quit_fn = getattr(pygame_module, "quit", None)
+            if callable(quit_fn):
+                try:
+                    quit_fn()
+                except Exception:
+                    pass
 
 
 class InputAdapter(Protocol):
@@ -300,10 +416,7 @@ class GamepadInputAdapter:
 
     def _resolve_pygame_module(self) -> Any:
         if self._pygame_module is None:
-            _configure_pygame_headless_if_needed()
-            import pygame
-
-            self._pygame_module = pygame
+            self._pygame_module = _resolve_pygame_module()
         return self._pygame_module
 
     def _run_loop(self) -> None:
@@ -601,8 +714,10 @@ def _stop_listener(
 
 __all__ = [
     "GamepadInputAdapter",
+    "GamepadDeviceInfo",
     "InputAdapter",
     "InputRouter",
     "KeyboardInputAdapter",
     "MouseInputAdapter",
+    "list_connected_gamepads",
 ]

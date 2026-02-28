@@ -9,10 +9,12 @@ import pytest
 from d2rso import input_router as input_router_module
 from d2rso.input_events import InputSource, gamepad_event, keyboard_event, mouse_event
 from d2rso.input_router import (
+    GamepadDeviceInfo,
     GamepadInputAdapter,
     InputRouter,
     KeyboardInputAdapter,
     MouseInputAdapter,
+    list_connected_gamepads,
 )
 from d2rso.models import SkillItem
 from d2rso.tracker_engine import TrackerInputEngine
@@ -125,8 +127,16 @@ class _FakeEventQueue:
 
 
 class _FakeJoystick:
-    def __init__(self, index: int) -> None:
+    def __init__(
+        self,
+        index: int,
+        *,
+        name: str | None = None,
+        button_count: int = 10,
+    ) -> None:
         self.index = index
+        self.name = name or f"Gamepad {index}"
+        self.button_count = button_count
         self.init_count = 0
         self.quit_count = 0
 
@@ -136,10 +146,22 @@ class _FakeJoystick:
     def quit(self) -> None:
         self.quit_count += 1
 
+    def get_name(self) -> str:
+        return self.name
+
+    def get_numbuttons(self) -> int:
+        return self.button_count
+
 
 class _FakeJoystickModule:
-    def __init__(self, *, count: int) -> None:
+    def __init__(
+        self,
+        *,
+        count: int,
+        specs: list[tuple[str, int]] | None = None,
+    ) -> None:
         self._count = count
+        self._specs = list(specs or [])
         self._is_initialized = False
         self.instances: dict[int, _FakeJoystick] = {}
 
@@ -156,7 +178,15 @@ class _FakeJoystickModule:
         return self._count
 
     def Joystick(self, index: int) -> _FakeJoystick:
-        joystick = _FakeJoystick(index)
+        if 0 <= index < len(self._specs):
+            name, button_count = self._specs[index]
+        else:
+            name, button_count = f"Gamepad {index}", 10
+        joystick = _FakeJoystick(
+            index,
+            name=name,
+            button_count=button_count,
+        )
         self.instances[index] = joystick
         return joystick
 
@@ -166,12 +196,20 @@ class _FakePygame:
     JOYDEVICEADDED = 11
     JOYDEVICEREMOVED = 12
 
-    def __init__(self, *, joystick_count: int) -> None:
+    def __init__(
+        self,
+        *,
+        joystick_count: int,
+        joystick_specs: list[tuple[str, int]] | None = None,
+    ) -> None:
         self._is_initialized = False
         self.init_count = 0
         self.quit_count = 0
         self.event = _FakeEventQueue()
-        self.joystick = _FakeJoystickModule(count=joystick_count)
+        self.joystick = _FakeJoystickModule(
+            count=joystick_count,
+            specs=joystick_specs,
+        )
 
     def get_init(self) -> bool:
         return self._is_initialized
@@ -250,6 +288,33 @@ def test_darwin_keyboard_workaround_is_noop_off_macos(monkeypatch) -> None:
     input_router_module._apply_darwin_pynput_keyboard_workaround(keyboard_module)
 
     assert backend.keycode_context is _original_context
+
+
+def test_list_connected_gamepads_reports_names_and_button_counts() -> None:
+    fake_pygame = _FakePygame(
+        joystick_count=2,
+        joystick_specs=[
+            ("8BitDo Pro 2", 14),
+            ("Xbox Wireless Controller", 10),
+        ],
+    )
+
+    devices = list_connected_gamepads(pygame_module=fake_pygame)
+
+    assert devices == (
+        GamepadDeviceInfo(index=0, name="8BitDo Pro 2", button_count=14),
+        GamepadDeviceInfo(
+            index=1,
+            name="Xbox Wireless Controller",
+            button_count=10,
+        ),
+    )
+    assert fake_pygame.init_count == 1
+    assert fake_pygame.quit_count == 1
+    assert fake_pygame.joystick.instances[0].init_count == 1
+    assert fake_pygame.joystick.instances[0].quit_count == 1
+    assert fake_pygame.joystick.instances[1].init_count == 1
+    assert fake_pygame.joystick.instances[1].quit_count == 1
 
 
 def test_keyboard_adapter_emits_standardized_event() -> None:
@@ -468,7 +533,7 @@ def test_gamepad_adapter_routes_controller_input_to_tracker_engine() -> None:
     assert fake_pygame.quit_count == 1
 
 
-def test_gamepad_adapter_ignores_unsupported_button_indices_without_error() -> None:
+def test_gamepad_adapter_emits_double_digit_button_indices() -> None:
     fake_pygame = _FakePygame(joystick_count=1)
     received = []
     errors = []
@@ -484,7 +549,7 @@ def test_gamepad_adapter_ignores_unsupported_button_indices_without_error() -> N
     time.sleep(0.02)
     adapter.stop()
 
-    assert received == []
+    assert [event.code for event in received] == ["Buttons10"]
     assert errors == []
     assert adapter.is_running is False
 

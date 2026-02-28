@@ -42,7 +42,9 @@ def test_code_normalizers_standardize_keyboard_mouse_and_gamepad_names():
     assert normalize_mouse_code("xbutton2") == "MOUSEX2"
 
     assert normalize_gamepad_code(48) == "Buttons0"
+    assert normalize_gamepad_code(12) == "Buttons12"
     assert normalize_gamepad_code("joystickoffset.buttons7") == "Buttons7"
+    assert normalize_gamepad_code("GamePad Button 12") == "Buttons12"
 
 
 def test_source_inference_and_generic_normalization_follow_tracker_naming():
@@ -53,6 +55,7 @@ def test_source_inference_and_generic_normalization_follow_tracker_naming():
     assert normalize_input_code("f1") == "F1"
     assert normalize_input_code("button.right") == "MOUSE2"
     assert normalize_input_code("GamePad Button 4") == "Buttons4"
+    assert normalize_input_code("Buttons12", source=InputSource.GAMEPAD) == "Buttons12"
 
 
 def test_invalid_device_code_is_rejected_for_event_creation():

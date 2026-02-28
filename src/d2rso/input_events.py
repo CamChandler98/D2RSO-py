@@ -188,10 +188,10 @@ def normalize_input_source(source: InputSource | str) -> InputSource:
 
 
 def _normalize_buttons_index(value: int) -> str | None:
-    if 0 <= value <= 9:
-        return f"Buttons{value}"
     if 48 <= value <= 57:
         return f"Buttons{value - 48}"
+    if value >= 0:
+        return f"Buttons{value}"
     return None
 
 
@@ -331,7 +331,7 @@ def normalize_mouse_code(raw_code: Any) -> str | None:
 
 
 def normalize_gamepad_code(raw_code: Any) -> str | None:
-    """Normalize raw gamepad button identifiers to Buttons0..Buttons9."""
+    """Normalize raw gamepad button identifiers to Buttons0..ButtonsN."""
     raw = _extract_raw_code(raw_code)
     if raw is None:
         return None

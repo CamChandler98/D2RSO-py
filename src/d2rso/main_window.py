@@ -9,8 +9,9 @@ from typing import Any
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .countdown_service import CountdownService
-from .input_events import normalize_input_code
-from .key_icon_registry import KeyIconRegistry, get_key_icon_registry
+from .input_events import normalize_gamepad_code, normalize_input_code
+from .input_router import GamepadDeviceInfo, list_connected_gamepads
+from .key_icon_registry import KeyEntry, KeyIconRegistry, get_key_icon_registry
 from .models import (
     DEFAULT_SKILL_DURATION_SECONDS,
     DEFAULT_SKILL_KEY,
@@ -50,6 +51,13 @@ class MainWindow(QtWidgets.QMainWindow):
         icon_registry: KeyIconRegistry | None = None,
         input_router_factory: Callable[..., Any] | None = None,
         countdown_service_factory: Callable[[], CountdownService] | None = None,
+        gamepad_lister: (
+            Callable[
+                [],
+                list[GamepadDeviceInfo] | tuple[GamepadDeviceInfo, ...],
+            ]
+            | None
+        ) = None,
         enable_tray: bool | None = None,
         tray_icon_factory: Callable[..., Any] | None = None,
         parent: QtWidgets.QWidget | None = None,
@@ -69,6 +77,8 @@ class MainWindow(QtWidgets.QMainWindow):
             parent=self,
         )
         self._tracker_runtime.error_occurred.connect(self._handle_runtime_error)
+        self._gamepad_lister = gamepad_lister or list_connected_gamepads
+        self._connected_gamepads: tuple[GamepadDeviceInfo, ...] = ()
 
         self._loading_ui = False
         self._enable_tray = enable_tray
@@ -493,6 +503,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._loading_ui = False
 
     def _populate_skill_table(self) -> None:
+        self._connected_gamepads = self._list_connected_gamepads()
         self.skill_table.setRowCount(0)
         profile = self._current_profile()
         if profile is None:
@@ -602,15 +613,137 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _build_key_combo(self, current_code: str | None) -> QtWidgets.QComboBox:
         combo = QtWidgets.QComboBox(self)
-        for entry in self._icon_registry.list_key_entries(include_empty=True):
+        for entry in self._list_key_entries_for_combo(current_code):
             label = entry.name if entry.name is not None else "(none)"
             combo.addItem(label, entry.code)
+        tooltip = self._gamepad_combo_tooltip()
+        if tooltip:
+            combo.setToolTip(tooltip)
         selected_code = self._validated_key_code(current_code)
         selected_index = self._find_combo_data_index(combo, selected_code)
         if selected_index < 0:
             selected_index = self._find_combo_data_index(combo, None)
         combo.setCurrentIndex(selected_index if selected_index >= 0 else 0)
         return combo
+
+    def _list_connected_gamepads(self) -> tuple[GamepadDeviceInfo, ...]:
+        try:
+            devices = tuple(self._gamepad_lister())
+        except Exception:
+            return ()
+        return tuple(
+            device for device in devices if isinstance(device, GamepadDeviceInfo)
+        )
+
+    def _list_key_entries_for_combo(
+        self,
+        current_code: str | None,
+    ) -> tuple[KeyEntry, ...]:
+        entries = list(self._icon_registry.list_key_entries(include_empty=True))
+        dynamic_gamepad_entries = list(self._gamepad_key_entries())
+        result: list[KeyEntry] = []
+        inserted_gamepad_entries = False
+
+        for entry in entries:
+            if normalize_gamepad_code(entry.code) is not None:
+                if not inserted_gamepad_entries:
+                    result.extend(dynamic_gamepad_entries)
+                    inserted_gamepad_entries = True
+                continue
+            result.append(entry)
+
+        if not inserted_gamepad_entries and dynamic_gamepad_entries:
+            null_index = self._find_null_key_entry_index(result)
+            result[null_index:null_index] = dynamic_gamepad_entries
+
+        selected_code = self._validated_key_code(current_code)
+        if (
+            selected_code is not None
+            and normalize_gamepad_code(selected_code) is not None
+            and all(entry.code != selected_code for entry in result)
+        ):
+            result.insert(
+                self._find_null_key_entry_index(result),
+                KeyEntry(
+                    name=f"{self._gamepad_label_for_code(selected_code)} (saved)",
+                    code=selected_code,
+                ),
+            )
+
+        return tuple(result)
+
+    def _gamepad_key_entries(self) -> tuple[KeyEntry, ...]:
+        devices = self._connected_gamepads
+        if not devices:
+            return self._default_gamepad_key_entries()
+
+        max_button_count = max((device.button_count for device in devices), default=0)
+        if max_button_count <= 0:
+            return self._default_gamepad_key_entries()
+
+        device_name = devices[0].name if len(devices) == 1 else None
+        return tuple(
+            KeyEntry(
+                name=self._gamepad_label_for_index(index, device_name=device_name),
+                code=f"Buttons{index}",
+            )
+            for index in range(max_button_count)
+        )
+
+    def _default_gamepad_key_entries(self) -> tuple[KeyEntry, ...]:
+        return tuple(
+            entry
+            for entry in self._icon_registry.list_key_entries(include_empty=False)
+            if normalize_gamepad_code(entry.code) is not None
+        )
+
+    @staticmethod
+    def _find_null_key_entry_index(entries: list[KeyEntry]) -> int:
+        return next(
+            (index for index, entry in enumerate(entries) if entry.code is None),
+            len(entries),
+        )
+
+    @staticmethod
+    def _gamepad_label_for_index(
+        index: int,
+        *,
+        device_name: str | None = None,
+    ) -> str:
+        if device_name:
+            return f"{device_name}: Button {index}"
+        return f"GamePad Button {index}"
+
+    def _gamepad_label_for_code(self, code: str) -> str:
+        normalized = normalize_gamepad_code(code)
+        if normalized is None:
+            return str(code)
+        try:
+            index = int(normalized.removeprefix("Buttons"))
+        except ValueError:
+            return normalized
+        return self._gamepad_label_for_index(index)
+
+    def _gamepad_combo_tooltip(self) -> str | None:
+        devices = self._connected_gamepads
+        if not devices:
+            return (
+                "No controller detected. "
+                "Gamepad bindings use raw button numbers like Buttons0."
+            )
+        if len(devices) == 1:
+            device = devices[0]
+            return (
+                f"Detected controller: {device.name} ({device.button_count} buttons). "
+                "Bindings store raw button numbers."
+            )
+        summary = ", ".join(
+            f"{device.name} ({device.button_count})" for device in devices
+        )
+        return (
+            f"Detected controllers: {summary}. "
+            "Bindings match button numbers and do not distinguish between controllers."
+        )
 
     @staticmethod
     def _find_combo_data_index(combo: QtWidgets.QComboBox, target: str | None) -> int:
@@ -642,6 +775,9 @@ class MainWindow(QtWidgets.QMainWindow):
         normalized = normalize_input_code(value.strip())
         if normalized is None:
             return None
+
+        if normalize_gamepad_code(normalized) is not None:
+            return normalized
 
         entry = self._icon_registry.get_key(normalized)
         if entry is None:

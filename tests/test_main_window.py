@@ -5,6 +5,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from d2rso.input_events import keyboard_event
+from d2rso.input_router import GamepadDeviceInfo
 from d2rso.key_icon_registry import KeyIconRegistry
 from d2rso.main_window import MainWindow
 from d2rso.models import (
@@ -119,6 +120,7 @@ def _build_window(
     settings: Settings,
     *,
     enable_tray: bool = False,
+    gamepad_lister=None,
 ) -> tuple[MainWindow, _MemorySettingsStore, _FakeInputRouter]:
     _get_qapp()
     store = _MemorySettingsStore(settings)
@@ -133,6 +135,7 @@ def _build_window(
         settings_store=store,
         icon_registry=KeyIconRegistry(assets_dir="does-not-exist"),
         input_router_factory=_router_factory,
+        gamepad_lister=gamepad_lister,
         enable_tray=enable_tray,
         tray_icon_factory=_FakeTrayIcon if enable_tray else None,
     )
@@ -154,6 +157,12 @@ def _checkbox_from_cell(wrapper: QtWidgets.QWidget) -> QtWidgets.QCheckBox:
     checkbox = item.widget()
     assert isinstance(checkbox, QtWidgets.QCheckBox)
     return checkbox
+
+
+def _combo_item_text_for_data(combo: QtWidgets.QComboBox, data: str | None) -> str:
+    index = combo.findData(data)
+    assert index >= 0
+    return combo.itemText(index)
 
 
 def test_profiles_crud_and_switching_persist_cleanly():
@@ -416,6 +425,91 @@ def test_skill_row_validation_normalizes_aliases_and_rejects_invalid_keys():
     assert item.select_key == "Buttons7"
     assert item.skill_key is None
     assert item.time_length == 0.0
+
+    window.close()
+
+
+def test_key_combos_show_connected_single_controller_button_labels():
+    settings = Settings(
+        last_selected_profile_id=0,
+        profiles=[Profile(id=0, name="Default")],
+        skill_items=[
+            SkillItem(
+                id=14,
+                profile_id=0,
+                select_key="Buttons1",
+                skill_key="Buttons3",
+            )
+        ],
+    )
+    window, _store, _router = _build_window(
+        settings,
+        gamepad_lister=lambda: (
+            GamepadDeviceInfo(
+                index=0,
+                name="8BitDo Pro 2",
+                button_count=4,
+            ),
+        ),
+    )
+
+    select_combo = window.skill_table.cellWidget(0, 3)
+    assert isinstance(select_combo, QtWidgets.QComboBox)
+    assert (
+        _combo_item_text_for_data(select_combo, "Buttons0") == "8BitDo Pro 2: Button 0"
+    )
+    assert (
+        _combo_item_text_for_data(select_combo, "Buttons3") == "8BitDo Pro 2: Button 3"
+    )
+    assert select_combo.findData("Buttons4") == -1
+    assert "Detected controller: 8BitDo Pro 2 (4 buttons)." in select_combo.toolTip()
+
+    use_combo = window.skill_table.cellWidget(0, 4)
+    assert isinstance(use_combo, QtWidgets.QComboBox)
+    assert use_combo.currentData() == "Buttons3"
+    assert _combo_item_text_for_data(use_combo, "Buttons3") == "8BitDo Pro 2: Button 3"
+
+    window.close()
+
+
+def test_saved_gamepad_binding_is_preserved_when_controller_reports_fewer_buttons():
+    settings = Settings(
+        last_selected_profile_id=0,
+        profiles=[Profile(id=0, name="Default")],
+        skill_items=[
+            SkillItem(
+                id=15,
+                profile_id=0,
+                select_key="Buttons7",
+                skill_key="Buttons12",
+            )
+        ],
+    )
+    window, _store, _router = _build_window(
+        settings,
+        gamepad_lister=lambda: (
+            GamepadDeviceInfo(
+                index=0,
+                name="Xbox Wireless Controller",
+                button_count=4,
+            ),
+        ),
+    )
+
+    select_combo = window.skill_table.cellWidget(0, 3)
+    assert isinstance(select_combo, QtWidgets.QComboBox)
+    assert select_combo.currentData() == "Buttons7"
+    assert (
+        _combo_item_text_for_data(select_combo, "Buttons7")
+        == "GamePad Button 7 (saved)"
+    )
+
+    use_combo = window.skill_table.cellWidget(0, 4)
+    assert isinstance(use_combo, QtWidgets.QComboBox)
+    assert use_combo.currentData() == "Buttons12"
+    assert (
+        _combo_item_text_for_data(use_combo, "Buttons12") == "GamePad Button 12 (saved)"
+    )
 
     window.close()
 
