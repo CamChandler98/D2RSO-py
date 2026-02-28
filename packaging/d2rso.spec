@@ -5,7 +5,7 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_submodules
 
 
-spec_dir = Path(__file__).resolve().parent
+spec_dir = Path(SPEC).resolve().parent
 project_root = spec_dir.parent
 src_root = project_root / "src"
 assets_root = project_root / "assets" / "skills"
