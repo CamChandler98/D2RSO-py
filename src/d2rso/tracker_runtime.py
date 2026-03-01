@@ -21,7 +21,7 @@ def _default_input_router_factory(
     return InputRouter(on_triggered=on_triggered, on_error=on_error)
 
 
-def _reset_skill_sequence_state(skill_items: Sequence[SkillItem]) -> None:
+def _reset_skill_input_state(skill_items: Sequence[SkillItem]) -> None:
     for item in skill_items:
         if isinstance(item, SkillItem):
             item.reset_keys()
@@ -79,7 +79,7 @@ class TrackerRuntimeController(QtCore.QObject):
         if self.is_running and self._countdown_service is not None:
             return self._countdown_service
 
-        _reset_skill_sequence_state(self._skill_items)
+        _reset_skill_input_state(self._skill_items)
         self._input_router.set_skill_items(self._skill_items)
 
         countdown_service = self._countdown_service_factory()
@@ -89,7 +89,7 @@ class TrackerRuntimeController(QtCore.QObject):
             self._input_router.start()
         except Exception:
             self._input_router.set_skill_items(())
-            _reset_skill_sequence_state(self._skill_items)
+            _reset_skill_input_state(self._skill_items)
             self._countdown_service = None
             raise
 
@@ -104,7 +104,7 @@ class TrackerRuntimeController(QtCore.QObject):
             pending_error = exc
         finally:
             self._input_router.set_skill_items(())
-            _reset_skill_sequence_state(self._skill_items)
+            _reset_skill_input_state(self._skill_items)
             self._countdown_service = None
 
         if pending_error is not None:

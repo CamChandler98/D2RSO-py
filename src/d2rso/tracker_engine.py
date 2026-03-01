@@ -23,12 +23,11 @@ def _matches_event_code(config_code: str | None, event: InputEvent) -> bool:
 @dataclass(slots=True)
 class TrackerInputEngine:
     """
-    Applies skill select/use sequence rules against normalized InputEvent values.
+    Applies skill select/use hold rules against normalized InputEvent values.
 
-    Mirrors the original C# behavior:
-    1. Evaluate skill-key matches and trigger cooldowns.
-    2. Evaluate select-key matches.
-    3. Reset sequence state on untouched skills.
+    For combo-enabled skills, the select key acts as a held modifier. A skill
+    triggers when its skill key is pressed while the configured select key is
+    currently held.
     """
 
     skill_items: list[SkillItem] = field(default_factory=list)
@@ -42,14 +41,20 @@ class TrackerInputEngine:
         if not isinstance(event, InputEvent):
             raise TypeError("event must be an InputEvent")
 
-        used_item_ids: set[int] = set()
         triggered: list[SkillItem] = []
+
+        if not event.pressed:
+            for item in self.skill_items:
+                if not item.is_enabled:
+                    continue
+                if _matches_event_code(item.select_key, event):
+                    item.select_key_released()
+            return triggered
 
         for item in self.skill_items:
             if not item.is_enabled:
                 continue
             if _matches_event_code(item.skill_key, event):
-                used_item_ids.add(id(item))
                 if item.skill_key_pressed():
                     triggered.append(item)
 
@@ -57,12 +62,7 @@ class TrackerInputEngine:
             if not item.is_enabled:
                 continue
             if _matches_event_code(item.select_key, event):
-                used_item_ids.add(id(item))
                 item.select_key_pressed()
-
-        for item in self.skill_items:
-            if id(item) not in used_item_ids:
-                item.reset_keys()
 
         return triggered
 

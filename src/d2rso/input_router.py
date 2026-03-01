@@ -18,6 +18,12 @@ from .tracker_engine import TrackerInputEngine
 _QUEUE_TIMEOUT_SECONDS = 0.05
 _GAMEPAD_POLL_INTERVAL_SECONDS = 0.01
 _LISTENER_JOIN_TIMEOUT_SECONDS = 1.0
+_GAMEPAD_TRIGGER_AXIS_TO_BUTTON = {
+    4: 4,
+    5: 5,
+}
+_GAMEPAD_TRIGGER_PRESS_THRESHOLD = 0.5
+_GAMEPAD_TRIGGER_RELEASE_THRESHOLD = 0.25
 
 
 def _apply_darwin_pynput_keyboard_workaround(keyboard_module: Any) -> None:
@@ -27,7 +33,7 @@ def _apply_darwin_pynput_keyboard_workaround(keyboard_module: Any) -> None:
     On newer macOS versions, calling TSM/TIS keyboard input-source APIs from the
     pynput listener thread can trigger a hard abort in libdispatch. We only need
     the listener path (not the key injection controller), so using a no-op
-    keycode context is sufficient for this app's key-down tracking use case.
+    keycode context is sufficient for this app's global key tracking use case.
     """
     if platform.system() != "Darwin":
         return
@@ -198,13 +204,14 @@ class InputAdapter(Protocol):
 
 
 class KeyboardInputAdapter:
-    """Global keyboard key-down adapter backed by pynput."""
+    """Global keyboard press/release adapter backed by pynput."""
 
     def __init__(
         self,
         *,
-        listener_factory: Callable[[Callable[[Any], None]], Any] | None = None,
-        event_factory: Callable[[Any], InputEvent] = keyboard_event,
+        listener_factory: Callable[[Callable[[Any], None], Callable[[Any], None]], Any]
+        | None = None,
+        event_factory: Callable[..., InputEvent] = keyboard_event,
         event_callback: Callable[[InputEvent], None] | None = None,
         error_callback: Callable[[Exception], None] | None = None,
     ) -> None:
@@ -225,7 +232,7 @@ class KeyboardInputAdapter:
     def start(self) -> None:
         if self._is_running:
             return
-        listener = self._listener_factory(self._on_press)
+        listener = self._listener_factory(self._on_press, self._on_release)
         try:
             listener.start()
         except Exception:
@@ -245,14 +252,17 @@ class KeyboardInputAdapter:
         _stop_listener(listener)
 
     def _on_press(self, key: Any) -> None:
-        self._emit_normalized(key)
+        self._emit_normalized(key, pressed=True)
 
-    def _emit_normalized(self, raw_code: Any) -> None:
+    def _on_release(self, key: Any) -> None:
+        self._emit_normalized(key, pressed=False)
+
+    def _emit_normalized(self, raw_code: Any, *, pressed: bool) -> None:
         callback = self._event_callback
         if callback is None:
             return
         try:
-            callback(self._event_factory(raw_code))
+            callback(self._event_factory(raw_code, pressed=pressed))
         except ValueError:
             return
         except Exception as exc:
@@ -260,7 +270,7 @@ class KeyboardInputAdapter:
 
 
 class MouseInputAdapter:
-    """Global mouse button-down adapter backed by pynput."""
+    """Global mouse button press/release adapter backed by pynput."""
 
     def __init__(
         self,
@@ -268,7 +278,7 @@ class MouseInputAdapter:
         listener_factory: (
             Callable[[Callable[[int, int, Any, bool], None]], Any] | None
         ) = None,
-        event_factory: Callable[[Any], InputEvent] = mouse_event,
+        event_factory: Callable[..., InputEvent] = mouse_event,
         event_callback: Callable[[InputEvent], None] | None = None,
         error_callback: Callable[[Exception], None] | None = None,
     ) -> None:
@@ -309,16 +319,14 @@ class MouseInputAdapter:
         _stop_listener(listener)
 
     def _on_click(self, _x: int, _y: int, button: Any, pressed: bool) -> None:
-        if not pressed:
-            return
-        self._emit_normalized(button)
+        self._emit_normalized(button, pressed=pressed)
 
-    def _emit_normalized(self, raw_code: Any) -> None:
+    def _emit_normalized(self, raw_code: Any, *, pressed: bool) -> None:
         callback = self._event_callback
         if callback is None:
             return
         try:
-            callback(self._event_factory(raw_code))
+            callback(self._event_factory(raw_code, pressed=pressed))
         except ValueError:
             return
         except Exception as exc:
@@ -333,7 +341,7 @@ class GamepadInputAdapter:
         *,
         pygame_module: Any | None = None,
         thread_factory: Callable[..., threading.Thread] = threading.Thread,
-        event_factory: Callable[[Any], InputEvent] = gamepad_event,
+        event_factory: Callable[..., InputEvent] = gamepad_event,
         event_callback: Callable[[InputEvent], None] | None = None,
         error_callback: Callable[[Exception], None] | None = None,
         poll_interval_seconds: float = _GAMEPAD_POLL_INTERVAL_SECONDS,
@@ -350,6 +358,7 @@ class GamepadInputAdapter:
         self._joysticks: list[Any] = []
         self._owns_pygame_init = False
         self._owns_joystick_init = False
+        self._axis_button_states: dict[int, bool] = {}
 
     @property
     def is_running(self) -> bool:
@@ -397,6 +406,7 @@ class GamepadInputAdapter:
         self._cleanup_runtime()
 
     def _initialize_runtime(self) -> None:
+        self._axis_button_states.clear()
         pygame_module = self._resolve_pygame_module()
         _configure_pygame_headless_if_needed(pygame_module)
         if hasattr(pygame_module, "get_init") and not pygame_module.get_init():
@@ -432,28 +442,62 @@ class GamepadInputAdapter:
         pygame_module = self._resolve_pygame_module()
         events = tuple(pygame_module.event.get())
         joy_button_down = getattr(pygame_module, "JOYBUTTONDOWN", None)
+        joy_button_up = getattr(pygame_module, "JOYBUTTONUP", None)
+        joy_axis_motion = getattr(pygame_module, "JOYAXISMOTION", None)
         joy_device_added = getattr(pygame_module, "JOYDEVICEADDED", None)
         joy_device_removed = getattr(pygame_module, "JOYDEVICEREMOVED", None)
         for event in events:
             event_type = getattr(event, "type", None)
 
             if event_type == joy_button_down:
-                self._emit_normalized(getattr(event, "button", None))
+                self._emit_normalized(getattr(event, "button", None), pressed=True)
+                continue
+
+            if event_type == joy_button_up:
+                self._emit_normalized(getattr(event, "button", None), pressed=False)
+                continue
+
+            if event_type == joy_axis_motion:
+                self._handle_axis_motion(
+                    getattr(event, "axis", None),
+                    getattr(event, "value", None),
+                )
                 continue
 
             if event_type in {joy_device_added, joy_device_removed}:
                 self._refresh_joysticks()
 
-    def _emit_normalized(self, raw_code: Any) -> None:
+    def _emit_normalized(self, raw_code: Any, *, pressed: bool) -> None:
         callback = self._event_callback
         if callback is None or raw_code is None:
             return
         try:
-            callback(self._event_factory(raw_code))
+            callback(self._event_factory(raw_code, pressed=pressed))
         except ValueError:
             return
         except Exception as exc:
             _handle_adapter_exception(exc, self._error_callback)
+
+    def _handle_axis_motion(self, axis: Any, value: Any) -> None:
+        try:
+            axis_index = int(axis)
+            axis_value = float(value)
+        except (TypeError, ValueError):
+            return
+
+        virtual_button = _GAMEPAD_TRIGGER_AXIS_TO_BUTTON.get(axis_index)
+        if virtual_button is None:
+            return
+
+        is_pressed = self._axis_button_states.get(virtual_button, False)
+        if not is_pressed and axis_value >= _GAMEPAD_TRIGGER_PRESS_THRESHOLD:
+            self._axis_button_states[virtual_button] = True
+            self._emit_normalized(virtual_button, pressed=True)
+            return
+
+        if is_pressed and axis_value <= _GAMEPAD_TRIGGER_RELEASE_THRESHOLD:
+            self._axis_button_states[virtual_button] = False
+            self._emit_normalized(virtual_button, pressed=False)
 
     def _refresh_joysticks(self) -> None:
         pygame_module = self._resolve_pygame_module()
@@ -508,6 +552,7 @@ class GamepadInputAdapter:
 
         self._owns_pygame_init = False
         self._owns_joystick_init = False
+        self._axis_button_states.clear()
 
 
 class InputRouter:
@@ -661,11 +706,14 @@ class InputRouter:
                 break
 
 
-def _default_keyboard_listener_factory(on_press: Callable[[Any], None]) -> Any:
+def _default_keyboard_listener_factory(
+    on_press: Callable[[Any], None],
+    on_release: Callable[[Any], None],
+) -> Any:
     from pynput import keyboard
 
     _apply_darwin_pynput_keyboard_workaround(keyboard)
-    return keyboard.Listener(on_press=on_press)
+    return keyboard.Listener(on_press=on_press, on_release=on_release)
 
 
 def _default_mouse_listener_factory(

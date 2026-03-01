@@ -24,12 +24,23 @@ def test_keyboard_mouse_gamepad_emit_same_event_shape():
     assert keyboard.code == "F1"
     assert keyboard.source == InputSource.KEYBOARD
     assert keyboard.timestamp == 101.0
+    assert keyboard.pressed is True
     assert mouse.code == "MOUSE2"
     assert mouse.source == InputSource.MOUSE
     assert mouse.timestamp == 102.0
+    assert mouse.pressed is True
     assert gamepad.code == "Buttons0"
     assert gamepad.source == InputSource.GAMEPAD
     assert gamepad.timestamp == 103.0
+    assert gamepad.pressed is True
+
+
+def test_event_creation_preserves_release_transitions():
+    event = gamepad_event("GamePad Button 4", pressed=False)
+
+    assert event.code == "Buttons4"
+    assert event.source == InputSource.GAMEPAD
+    assert event.pressed is False
 
 
 def test_code_normalizers_standardize_keyboard_mouse_and_gamepad_names():

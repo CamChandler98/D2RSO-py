@@ -39,9 +39,11 @@ class _FakeListener:
         self,
         *,
         on_press=None,
+        on_release=None,
         on_click=None,
     ) -> None:
         self.on_press = on_press
+        self.on_release = on_release
         self.on_click = on_click
         self.start_count = 0
         self.stop_count = 0
@@ -108,6 +110,8 @@ class _StopFailingAdapter(_FakeAdapter):
 class _FakePygameEvent:
     type: int
     button: int | None = None
+    axis: int | None = None
+    value: float | None = None
 
 
 class _FakeEventQueue:
@@ -193,8 +197,10 @@ class _FakeJoystickModule:
 
 class _FakePygame:
     JOYBUTTONDOWN = 10
-    JOYDEVICEADDED = 11
-    JOYDEVICEREMOVED = 12
+    JOYBUTTONUP = 11
+    JOYAXISMOTION = 12
+    JOYDEVICEADDED = 13
+    JOYDEVICEREMOVED = 14
 
     def __init__(
         self,
@@ -320,8 +326,8 @@ def test_list_connected_gamepads_reports_names_and_button_counts() -> None:
 def test_keyboard_adapter_emits_standardized_event() -> None:
     holder: dict[str, _FakeListener] = {}
 
-    def _factory(on_press):
-        listener = _FakeListener(on_press=on_press)
+    def _factory(on_press, on_release):
+        listener = _FakeListener(on_press=on_press, on_release=on_release)
         holder["listener"] = listener
         return listener
 
@@ -339,13 +345,36 @@ def test_keyboard_adapter_emits_standardized_event() -> None:
     assert len(received) == 1
     assert received[0].code == "F8"
     assert received[0].source == InputSource.KEYBOARD
+    assert received[0].pressed is True
+
+
+def test_keyboard_adapter_emits_release_events() -> None:
+    holder: dict[str, _FakeListener] = {}
+
+    def _factory(on_press, on_release):
+        listener = _FakeListener(on_press=on_press, on_release=on_release)
+        holder["listener"] = listener
+        return listener
+
+    received = []
+    adapter = KeyboardInputAdapter(listener_factory=_factory)
+    adapter.set_event_callback(received.append)
+    adapter.start()
+
+    holder["listener"].on_release("f8")
+    adapter.stop()
+
+    assert len(received) == 1
+    assert received[0].code == "F8"
+    assert received[0].source == InputSource.KEYBOARD
+    assert received[0].pressed is False
 
 
 def test_keyboard_adapter_rolls_back_if_listener_start_fails() -> None:
     holder: dict[str, _StartFailingListener] = {}
 
-    def _factory(on_press):
-        listener = _StartFailingListener(on_press=on_press)
+    def _factory(on_press, on_release):
+        listener = _StartFailingListener(on_press=on_press, on_release=on_release)
         holder["listener"] = listener
         return listener
 
@@ -363,8 +392,8 @@ def test_keyboard_adapter_rolls_back_if_listener_start_fails() -> None:
 def test_keyboard_adapter_start_stop_are_idempotent_and_join_listener() -> None:
     holder: dict[str, _FakeListener] = {}
 
-    def _factory(on_press):
-        listener = _FakeListener(on_press=on_press)
+    def _factory(on_press, on_release):
+        listener = _FakeListener(on_press=on_press, on_release=on_release)
         holder["listener"] = listener
         return listener
 
@@ -382,7 +411,7 @@ def test_keyboard_adapter_start_stop_are_idempotent_and_join_listener() -> None:
     assert holder["listener"].join_timeouts == [1.0]
 
 
-def test_mouse_adapter_maps_button_down_only_to_standard_event() -> None:
+def test_mouse_adapter_maps_button_press_and_release_to_standard_events() -> None:
     holder: dict[str, _FakeListener] = {}
 
     def _factory(on_click):
@@ -395,13 +424,17 @@ def test_mouse_adapter_maps_button_down_only_to_standard_event() -> None:
     adapter.set_event_callback(received.append)
     adapter.start()
 
-    holder["listener"].on_click(0, 0, "button.right", False)
     holder["listener"].on_click(0, 0, "button.right", True)
+    holder["listener"].on_click(0, 0, "button.right", False)
     adapter.stop()
 
-    assert len(received) == 1
+    assert len(received) == 2
     assert received[0].code == "MOUSE2"
     assert received[0].source == InputSource.MOUSE
+    assert received[0].pressed is True
+    assert received[1].code == "MOUSE2"
+    assert received[1].source == InputSource.MOUSE
+    assert received[1].pressed is False
     assert holder["listener"].join_count == 1
 
 
@@ -437,6 +470,7 @@ def test_mouse_adapter_maps_supported_button_names_to_tracker_codes(
     assert len(received) == 1
     assert received[0].code == expected_code
     assert received[0].source == InputSource.MOUSE
+    assert received[0].pressed is True
     assert holder["listener"].join_count == 1
 
 
@@ -502,6 +536,89 @@ def test_gamepad_adapter_emits_standardized_button_events() -> None:
 
     assert received[0].code == "Buttons7"
     assert received[0].source == InputSource.GAMEPAD
+    assert received[0].pressed is True
+
+
+def test_gamepad_adapter_emits_button_release_events() -> None:
+    fake_pygame = _FakePygame(joystick_count=1)
+    received = []
+    adapter = GamepadInputAdapter(
+        pygame_module=fake_pygame,
+        poll_interval_seconds=0.001,
+    )
+    adapter.set_event_callback(received.append)
+
+    adapter.start()
+    fake_pygame.event.push(_FakePygameEvent(type=fake_pygame.JOYBUTTONUP, button=7))
+
+    assert _wait_until(lambda: len(received) == 1)
+    adapter.stop()
+
+    assert received[0].code == "Buttons7"
+    assert received[0].source == InputSource.GAMEPAD
+    assert received[0].pressed is False
+
+
+def test_gamepad_adapter_maps_trigger_axis_motion_to_virtual_button_events() -> None:
+    fake_pygame = _FakePygame(joystick_count=1)
+    received = []
+    adapter = GamepadInputAdapter(
+        pygame_module=fake_pygame,
+        poll_interval_seconds=0.001,
+    )
+    adapter.set_event_callback(received.append)
+
+    adapter.start()
+    fake_pygame.event.push(
+        _FakePygameEvent(type=fake_pygame.JOYAXISMOTION, axis=4, value=0.49)
+    )
+    fake_pygame.event.push(
+        _FakePygameEvent(type=fake_pygame.JOYAXISMOTION, axis=4, value=0.6)
+    )
+    fake_pygame.event.push(
+        _FakePygameEvent(type=fake_pygame.JOYAXISMOTION, axis=4, value=0.9)
+    )
+    fake_pygame.event.push(
+        _FakePygameEvent(type=fake_pygame.JOYAXISMOTION, axis=4, value=0.2)
+    )
+
+    assert _wait_until(lambda: len(received) == 2)
+    adapter.stop()
+
+    assert [event.code for event in received] == ["Buttons4", "Buttons4"]
+    assert [event.pressed for event in received] == [True, False]
+
+
+def test_gamepad_adapter_routes_trigger_axis_motion_to_tracker_engine() -> None:
+    fake_pygame = _FakePygame(joystick_count=1)
+    adapter = GamepadInputAdapter(
+        pygame_module=fake_pygame,
+        poll_interval_seconds=0.001,
+    )
+    engine = TrackerInputEngine(
+        skill_items=[SkillItem(id=32, select_key=None, skill_key="Buttons4")]
+    )
+    routed: list[tuple[str, bool, list[int]]] = []
+    router = InputRouter(
+        tracker_engine=engine,
+        adapters=[adapter],
+        on_triggered=lambda event, items: routed.append(
+            (event.code, event.pressed, [item.id for item in items])
+        ),
+    )
+
+    router.start()
+    fake_pygame.event.push(
+        _FakePygameEvent(type=fake_pygame.JOYAXISMOTION, axis=4, value=0.7)
+    )
+    fake_pygame.event.push(
+        _FakePygameEvent(type=fake_pygame.JOYAXISMOTION, axis=4, value=0.2)
+    )
+
+    assert _wait_until(
+        lambda: routed == [("Buttons4", True, [32]), ("Buttons4", False, [])]
+    )
+    router.stop()
 
 
 def test_gamepad_adapter_routes_controller_input_to_tracker_engine() -> None:
@@ -550,6 +667,7 @@ def test_gamepad_adapter_emits_double_digit_button_indices() -> None:
     adapter.stop()
 
     assert [event.code for event in received] == ["Buttons10"]
+    assert [event.pressed for event in received] == [True]
     assert errors == []
     assert adapter.is_running is False
 
@@ -609,6 +727,38 @@ def test_input_router_routes_all_device_events_to_tracker_engine() -> None:
     assert keyboard.stop_count == 1
     assert mouse.stop_count == 1
     assert gamepad.stop_count == 1
+
+
+def test_input_router_uses_release_events_to_end_gamepad_combo_hold() -> None:
+    gamepad = _FakeAdapter()
+    engine = TrackerInputEngine(
+        skill_items=[SkillItem(id=41, select_key="Buttons4", skill_key="Buttons0")]
+    )
+    routed: list[tuple[str, bool, list[int]]] = []
+    router = InputRouter(
+        tracker_engine=engine,
+        adapters=[gamepad],
+        on_triggered=lambda event, items: routed.append(
+            (event.code, event.pressed, [item.id for item in items])
+        ),
+    )
+
+    router.start()
+    gamepad.emit(gamepad_event(4))
+    gamepad.emit(gamepad_event(0))
+    gamepad.emit(gamepad_event(4, pressed=False))
+    gamepad.emit(gamepad_event(0))
+
+    assert _wait_until(
+        lambda: routed
+        == [
+            ("Buttons4", True, []),
+            ("Buttons0", True, [41]),
+            ("Buttons4", False, []),
+            ("Buttons0", True, []),
+        ]
+    )
+    router.stop()
 
 
 def test_input_router_start_stop_are_idempotent() -> None:

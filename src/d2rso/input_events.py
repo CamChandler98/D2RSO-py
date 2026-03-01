@@ -395,6 +395,7 @@ class InputEvent:
     code: str
     source: InputSource | str
     timestamp: float = field(default_factory=time.time)
+    pressed: bool = True
 
     def __post_init__(self) -> None:
         normalized_source = normalize_input_source(self.source)
@@ -406,6 +407,7 @@ class InputEvent:
         object.__setattr__(self, "source", normalized_source)
         object.__setattr__(self, "code", normalized_code)
         object.__setattr__(self, "timestamp", float(self.timestamp))
+        object.__setattr__(self, "pressed", bool(self.pressed))
 
 
 def make_input_event(
@@ -413,26 +415,57 @@ def make_input_event(
     *,
     source: InputSource | str,
     timestamp: float | None = None,
+    pressed: bool = True,
 ) -> InputEvent:
     """Create a normalized input event."""
     if timestamp is None:
-        return InputEvent(code=code, source=source)
-    return InputEvent(code=code, source=source, timestamp=timestamp)
+        return InputEvent(code=code, source=source, pressed=pressed)
+    return InputEvent(code=code, source=source, timestamp=timestamp, pressed=pressed)
 
 
-def keyboard_event(code: Any, *, timestamp: float | None = None) -> InputEvent:
+def keyboard_event(
+    code: Any,
+    *,
+    timestamp: float | None = None,
+    pressed: bool = True,
+) -> InputEvent:
     """Build an InputEvent from a keyboard adapter payload."""
-    return make_input_event(code, source=InputSource.KEYBOARD, timestamp=timestamp)
+    return make_input_event(
+        code,
+        source=InputSource.KEYBOARD,
+        timestamp=timestamp,
+        pressed=pressed,
+    )
 
 
-def mouse_event(code: Any, *, timestamp: float | None = None) -> InputEvent:
+def mouse_event(
+    code: Any,
+    *,
+    timestamp: float | None = None,
+    pressed: bool = True,
+) -> InputEvent:
     """Build an InputEvent from a mouse adapter payload."""
-    return make_input_event(code, source=InputSource.MOUSE, timestamp=timestamp)
+    return make_input_event(
+        code,
+        source=InputSource.MOUSE,
+        timestamp=timestamp,
+        pressed=pressed,
+    )
 
 
-def gamepad_event(code: Any, *, timestamp: float | None = None) -> InputEvent:
+def gamepad_event(
+    code: Any,
+    *,
+    timestamp: float | None = None,
+    pressed: bool = True,
+) -> InputEvent:
     """Build an InputEvent from a gamepad adapter payload."""
-    return make_input_event(code, source=InputSource.GAMEPAD, timestamp=timestamp)
+    return make_input_event(
+        code,
+        source=InputSource.GAMEPAD,
+        timestamp=timestamp,
+        pressed=pressed,
+    )
 
 
 __all__ = [

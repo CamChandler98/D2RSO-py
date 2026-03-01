@@ -429,6 +429,33 @@ def test_skill_row_validation_normalizes_aliases_and_rejects_invalid_keys():
     window.close()
 
 
+def test_skill_row_accepts_trigger_gamepad_skill_without_select_key():
+    settings = Settings(
+        last_selected_profile_id=0,
+        profiles=[Profile(id=0, name="Default")],
+        skill_items=[
+            SkillItem(
+                id=15,
+                profile_id=0,
+                select_key=None,
+                skill_key="MOUSE2",
+            )
+        ],
+    )
+    window, store, _router = _build_window(settings)
+
+    window._update_skill_value(15, "select_key", None)
+    window._update_skill_value(15, "skill_key", "GamePad Button 4")
+    _flush_events()
+
+    saved = store.saved_settings
+    item = next(skill for skill in saved.skill_items if skill.id == 15)
+    assert item.select_key is None
+    assert item.skill_key == "Buttons4"
+
+    window.close()
+
+
 def test_key_combos_show_connected_single_controller_button_labels():
     settings = Settings(
         last_selected_profile_id=0,

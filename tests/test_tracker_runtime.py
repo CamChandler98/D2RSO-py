@@ -102,7 +102,7 @@ def test_tracker_runtime_routes_triggered_skills_into_countdown_service() -> Non
     assert countdown_service.active_count == 1
 
 
-def test_tracker_runtime_stop_clears_router_bindings_and_sequence_state() -> None:
+def test_tracker_runtime_stop_clears_router_bindings_and_input_state() -> None:
     _get_qapp()
     holder: dict[str, _FakeInputRouter] = {}
 

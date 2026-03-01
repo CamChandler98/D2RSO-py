@@ -100,7 +100,7 @@ TrackerProfile = Profile
 
 @dataclass(slots=True)
 class SkillItem:
-    """A skill configuration row with select/use sequence-state behavior."""
+    """A skill configuration row with select/use hold-state behavior."""
 
     id: int = 0
     profile_id: int = DEFAULT_PROFILE_ID
@@ -109,25 +109,24 @@ class SkillItem:
     is_enabled: bool = True
     select_key: str | None = None
     skill_key: str | None = DEFAULT_SKILL_KEY
-    _state: int = field(default=0, init=False, repr=False, compare=False)
+    _select_key_held: bool = field(default=False, init=False, repr=False, compare=False)
 
     def skill_key_pressed(self) -> bool:
         """Return True when this press should trigger the cooldown."""
-        if self._state == 0 and self.select_key is None:
-            return True
-        if self._state == 1:
-            self._state = 0
-            return True
-        return False
+        return self.select_key is None or self._select_key_held
 
     def select_key_pressed(self) -> None:
-        """Record a select-key press for sequence-based skills."""
-        if self._state == 0:
-            self._state = 1
+        """Mark the select key as held for combo-enabled skills."""
+        if self.select_key is not None:
+            self._select_key_held = True
+
+    def select_key_released(self) -> None:
+        """Mark the select key as no longer held."""
+        self._select_key_held = False
 
     def reset_keys(self) -> None:
-        """Clear any partial key sequence."""
-        self._state = 0
+        """Clear any held-key state."""
+        self._select_key_held = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
