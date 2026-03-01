@@ -1,6 +1,15 @@
 # D2RSO Python
 
-Desktop cooldown overlay tracker for Diablo II: Resurrected. Targets Python 3.11+ and Windows first, with a PySide6 configuration window, runtime overlay, and global keyboard, mouse, and gamepad triggers.
+Desktop cooldown overlay tracker for Diablo II: Resurrected. This repo is a Python port of the original C# D2RSO utility, rebuilt around a PySide6 desktop UI, a runtime overlay, persisted settings, and normalized global keyboard, mouse, and gamepad input handling.
+
+What makes the port interesting is that it is not just a line-by-line translation. The project reworks the original tool into a more testable and maintainable Python application with separated domain models, input routing, runtime lifecycle control, desktop packaging, and release automation.
+
+## Why This Repo Matters
+- Ground-up port of a legacy C# desktop utility into a modern Python desktop app.
+- Unified input abstraction across keyboard, mouse, and gamepad triggers.
+- PySide6 configuration UI plus a live overlay runtime for actual end-user use.
+- Test coverage across core logic, UI behavior, settings persistence, packaging helpers, and runtime control.
+- Release-oriented workflow with linting, smoke tests, deterministic archives, and tagged GitHub releases.
 
 ## Prerequisites
 - Python 3.11+
