@@ -1,6 +1,6 @@
-# D2RSO Python Skeleton
+# D2RSO Python
 
-Placeholder GUI shell for the D2RSO MVP. Targets Python 3.11+ and Windows first, with a minimal tkinter window that can be replaced later.
+Desktop cooldown overlay tracker for Diablo II: Resurrected. Targets Python 3.11+ and Windows first, with a PySide6 configuration window, runtime overlay, and global keyboard, mouse, and gamepad triggers.
 
 ## Prerequisites
 - Python 3.11+
@@ -39,13 +39,14 @@ black --check .
 ```
 
 Additional guides:
+- `CHANGELOG.md` for release notes
 - `planning/documents/windows_dev_environment_guide.md` for a fresh Windows development/test environment
 - `planning/documents/windows_install_uninstall_guide.md` for end-user install, update, and uninstall steps
 - `planning/documents/github_actions_guide.md` for CI, PR checks, and release workflow usage
 
 ## Project layout
-- `src/d2rso` – package with placeholder GUI entrypoint
-- `tests/` – basic import/run sanity tests
+- `src/d2rso` – desktop app package, overlay, input routing, and settings/runtime logic
+- `tests/` – unit and Qt UI coverage
 - `pyproject.toml` – metadata plus tool configs (black, ruff, mypy)
 - `ruff.toml`, `pytest.ini`, `Pipfile` – linting, testing, and Pipenv env setup
 - `.github/workflows/` – PR validation and Windows release packaging
@@ -67,7 +68,7 @@ python scripts/archive_dist.py
 ```
 
 ## Validation checklist
-- `pipenv run python -m d2rso` shows the placeholder window without errors.
+- `pipenv run python -m d2rso` shows the main D2RSO window without errors.
 - `pipenv run pytest` passes.
 - `./scripts/pre_ci_core_logic.sh` passes core logic tests used before CI.
 - `pipenv run ruff check .` and `pipenv run black --check .` succeed.

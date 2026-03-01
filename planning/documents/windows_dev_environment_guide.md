@@ -112,7 +112,7 @@ From repo root:
 pipenv run python -m d2rso
 ```
 
-Expected behavior: a placeholder D2RSO window appears without crashing.
+Expected behavior: the main D2RSO window appears without crashing.
 
 Close the app window after confirming it launches.
 

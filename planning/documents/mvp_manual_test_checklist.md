@@ -48,7 +48,7 @@ Out of scope:
 
 ### MVP-01 App launch smoke test
 - [ ] Run `pipenv run python -m d2rso`
-- [ ] Placeholder window opens with title `D2RSO`
+- [ ] Main D2RSO window opens with title `D2R Skill Overlay`
 - [ ] Closing window exits cleanly with no traceback
 - Notes / Defect ID:
 
@@ -225,4 +225,3 @@ Out of scope:
 - Open defects:
 - Follow-ups for next milestone:
 - Approved by:
-
