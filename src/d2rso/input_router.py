@@ -209,8 +209,9 @@ class KeyboardInputAdapter:
     def __init__(
         self,
         *,
-        listener_factory: Callable[[Callable[[Any], None], Callable[[Any], None]], Any]
-        | None = None,
+        listener_factory: (
+            Callable[[Callable[[Any], None], Callable[[Any], None]], Any] | None
+        ) = None,
         event_factory: Callable[..., InputEvent] = keyboard_event,
         event_callback: Callable[[InputEvent], None] | None = None,
         error_callback: Callable[[Exception], None] | None = None,
