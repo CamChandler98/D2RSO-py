@@ -131,9 +131,14 @@ class MainWindow(QtWidgets.QMainWindow):
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         try:
             if self._should_hide_to_tray_on_close():
-                event.ignore()
-                self._hide_to_tray()
-                return
+                close_action = self._prompt_for_close_action()
+                if close_action == "cancel":
+                    event.ignore()
+                    return
+                if close_action == "hide":
+                    event.ignore()
+                    self._hide_to_tray()
+                    return
             self._perform_shutdown()
             super().closeEvent(event)
         except KeyboardInterrupt:
@@ -314,6 +319,35 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _should_hide_to_tray_on_close(self) -> bool:
         return self._tray_icon is not None and not self._is_exiting
+
+    def _prompt_for_close_action(self) -> str:
+        dialog = QtWidgets.QMessageBox(self)
+        dialog.setIcon(QtWidgets.QMessageBox.Icon.Question)
+        dialog.setWindowTitle("Close D2R Skill Overlay")
+        dialog.setText("Choose what should happen when you close the app.")
+        dialog.setInformativeText(
+            "Hide to Tray keeps D2RSO running in the background. "
+            "Exit to Desktop stops tracking and closes the app."
+        )
+        hide_button = dialog.addButton(
+            "Hide to Tray",
+            QtWidgets.QMessageBox.ButtonRole.ActionRole,
+        )
+        exit_button = dialog.addButton(
+            "Exit to Desktop",
+            QtWidgets.QMessageBox.ButtonRole.DestructiveRole,
+        )
+        cancel_button = dialog.addButton(QtWidgets.QMessageBox.StandardButton.Cancel)
+        dialog.setDefaultButton(cancel_button)
+        dialog.setEscapeButton(cancel_button)
+        dialog.exec()
+
+        clicked_button = dialog.clickedButton()
+        if clicked_button == exit_button:
+            return "exit"
+        if clicked_button == hide_button:
+            return "hide"
+        return "cancel"
 
     def _should_hide_minimized_window(self) -> bool:
         return (

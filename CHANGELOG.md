@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.1.2 - 2026-03-02
+- Made window-close behavior explicit when system tray support is available by prompting users to hide to tray, exit to desktop, or cancel.
+
 ## 0.1.1 - 2026-03-01
 - Fixed Windows gamepad trigger bindings by mapping trigger axis motion to virtual `Buttons4` and `Buttons5` events.
 - Updated combo handling so select inputs behave as held modifiers instead of one-shot sequence state.

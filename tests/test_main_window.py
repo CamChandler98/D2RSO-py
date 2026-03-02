@@ -862,6 +862,14 @@ def test_close_hides_window_to_tray_and_tray_action_reopens_it():
         skill_items=[SkillItem(id=81, profile_id=0, skill_key="F1", time_length=4.0)],
     )
     window, _store, _router = _build_window(settings, enable_tray=True)
+    prompt_count = 0
+
+    def _choose_hide() -> str:
+        nonlocal prompt_count
+        prompt_count += 1
+        return "hide"
+
+    window._prompt_for_close_action = _choose_hide
 
     assert isinstance(window._tray_icon, _FakeTrayIcon)
     assert window._tray_toggle_action is not None
@@ -874,6 +882,7 @@ def test_close_hides_window_to_tray_and_tray_action_reopens_it():
     window.close()
     _flush_events()
 
+    assert prompt_count == 1
     assert window.isVisible() is False
     assert window.is_preview_visible is False
     assert window._tray_toggle_action.text() == "Open"
@@ -888,6 +897,72 @@ def test_close_hides_window_to_tray_and_tray_action_reopens_it():
     _flush_events()
 
 
+def test_close_cancel_keeps_window_open():
+    settings = Settings(
+        last_selected_profile_id=0,
+        profiles=[Profile(id=0, name="Default")],
+        skill_items=[SkillItem(id=83, profile_id=0, skill_key="F1", time_length=4.0)],
+    )
+    window, _store, _router = _build_window(settings, enable_tray=True)
+    prompt_count = 0
+
+    def _choose_cancel() -> str:
+        nonlocal prompt_count
+        prompt_count += 1
+        return "cancel"
+
+    window._prompt_for_close_action = _choose_cancel
+    window._toggle_preview()
+    _flush_events()
+
+    window.close()
+    _flush_events()
+
+    assert prompt_count == 1
+    assert window.isVisible() is True
+    assert window.is_preview_visible is True
+
+    window.exit_to_desktop()
+    _flush_events()
+
+
+def test_close_exit_performs_clean_shutdown_and_saves_runtime_position():
+    settings = Settings(
+        last_selected_profile_id=0,
+        profiles=[Profile(id=0, name="Default")],
+        skill_items=[SkillItem(id=84, profile_id=0, skill_key="F1", time_length=4.0)],
+    )
+    window, store, router = _build_window(settings, enable_tray=True)
+    prompt_count = 0
+
+    def _choose_exit() -> str:
+        nonlocal prompt_count
+        prompt_count += 1
+        return "exit"
+
+    window._prompt_for_close_action = _choose_exit
+
+    window._toggle_playback()
+    _flush_events()
+    assert window._runtime_overlay is not None
+
+    window._runtime_overlay.move(321, 654)
+    _flush_events()
+    tray_icon = window._tray_icon
+    assert isinstance(tray_icon, _FakeTrayIcon)
+
+    window.close()
+    _flush_events()
+
+    assert prompt_count == 1
+    assert router.is_running is False
+    assert router.stop_count == 1
+    assert tray_icon.deleted is True
+    saved = store.saved_settings
+    assert saved.tracker_x == 321
+    assert saved.tracker_y == 654
+
+
 def test_tray_exit_performs_clean_shutdown_and_saves_runtime_position():
     settings = Settings(
         last_selected_profile_id=0,
@@ -895,6 +970,7 @@ def test_tray_exit_performs_clean_shutdown_and_saves_runtime_position():
         skill_items=[SkillItem(id=82, profile_id=0, skill_key="F1", time_length=4.0)],
     )
     window, store, router = _build_window(settings, enable_tray=True)
+    window._prompt_for_close_action = lambda: "hide"
 
     window._toggle_playback()
     _flush_events()
